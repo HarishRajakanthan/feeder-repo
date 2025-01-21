@@ -1,11 +1,13 @@
 // Install dependencies: npm install react-chatbot-kit axios
-import "./App.css";
-import React, { useState } from "react";
+
+import React, { useState, useEffect } from "react";
 import Chatbot from "react-chatbot-kit";
 import "react-chatbot-kit/build/main.css";
 import axios from "axios";
+import "./App.css"; // Add this to include styles
 
-const API_ENDPOINT = "https://your-backend-api.com/chat"; // Replace with your backend API URL
+const START_CHAT_ENDPOINT = "https://your-backend-api.com/start-chat"; // Replace with your start-chat API URL
+const CONVERSE_ENDPOINT = "https://your-backend-api.com/chat"; // Replace with your chat API URL
 
 // Custom message parser
 class MessageParser {
@@ -25,14 +27,38 @@ class ActionProvider {
     this.setState = setStateFunc;
   }
 
+  async startChatSession() {
+    try {
+      const response = await axios.post(START_CHAT_ENDPOINT, {}, {
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const { sessionId, initialMessage } = response.data;
+      
+      // Update the chat with the initial message
+      this.setState((prev) => ({
+        ...prev,
+        messages: [
+          ...prev.messages,
+          this.createChatBotMessage(initialMessage || "Hello!"),
+        ],
+      }));
+
+      return sessionId;
+    } catch (error) {
+      console.error("Error starting chat session:", error);
+      return null;
+    }
+  }
+
   async sendMessageToBackend(message, sessionId) {
     try {
       const response = await axios.post(
-        API_ENDPOINT,
+        CONVERSE_ENDPOINT,
         { message },
         {
           headers: { "Content-Type": "application/json" },
-          params: { sessionId }, // Add sessionId as a parameter
+          params: { sessionId },
         }
       );
 
@@ -44,6 +70,24 @@ class ActionProvider {
   }
 
   async handleUserMessage(message) {
+    let sessionId = localStorage.getItem("sessionId");
+
+    if (!sessionId) {
+      sessionId = await this.startChatSession();
+      if (sessionId) {
+        localStorage.setItem("sessionId", sessionId);
+      } else {
+        this.setState((prev) => ({
+          ...prev,
+          messages: [
+            ...prev.messages,
+            this.createChatBotMessage("Failed to start chat session. Please try again later."),
+          ],
+        }));
+        return;
+      }
+    }
+
     this.setState((prev) => ({
       ...prev,
       messages: [
@@ -52,14 +96,7 @@ class ActionProvider {
       ],
     }));
 
-    const sessionId = localStorage.getItem("sessionId");
-
     const data = await this.sendMessageToBackend(message, sessionId);
-
-    // Save session ID from initial response if not already saved
-    if (!sessionId && data.sessionId) {
-      localStorage.setItem("sessionId", data.sessionId);
-    }
 
     this.setState((prev) => ({
       ...prev,
@@ -100,32 +137,30 @@ const App = () => {
 
   return (
     <div className="App">
-      <header className="App-header">
+      <div className="chatbot-container">
         <img
-          src="./logo.png" // Replace with your logo path
+          src="/logo.png" // Replace with your logo path
           alt="Chatbot Logo"
-          style={{ cursor: "pointer", width: "100px", height: "100px" }}
+          className="chatbot-logo"
           onClick={() => setShowChat(!showChat)}
         />
         {showChat && (
-          <Chatbot
-            config={config}
-            actionProvider={ActionProvider}
-            messageParser={MessageParser}
-          />
+          <div className="chatbot-popup">
+            <Chatbot
+              config={config}
+              actionProvider={ActionProvider}
+              messageParser={MessageParser}
+            />
+          </div>
         )}
-      </header>
+      </div>
     </div>
   );
 };
 
 export default App;
 
-
-.App {
-  font-family: sans-serif;
-  text-align: center;
-}
+/* CSS (App.css): 
 .chatbot-container {
   position: fixed;
   bottom: 0;
@@ -153,3 +188,4 @@ export default App;
   border-radius: 8px;
   overflow: hidden;
 }
+*/
