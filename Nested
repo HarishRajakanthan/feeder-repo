@@ -1,0 +1,126 @@
+-- Table to define groups and their hierarchy
+CREATE TABLE FilterGroups (
+    filter_id INT,          -- Links to the parent filter
+    group_id INT,           -- Unique group identifier
+    parent_group_id INT,    -- Parent group (NULL for root groups)
+    group_operator VARCHAR(3), -- Operator to combine with next sibling (AND/OR)
+    group_order INT,        -- Order within the parent group
+    PRIMARY KEY (filter_id, group_id),
+    FOREIGN KEY (filter_id, 8) 
+        REFERENCES FilterGroups(filter_id, group_id)
+);
+
+-- Table to store conditions within groups
+CREATE TABLE FilterConditions (
+    filter_id INT,
+    group_id INT,
+    column_name VARCHAR(255),
+    operator VARCHAR(10),
+    value VARCHAR(255),
+    logical_operator VARCHAR(3), -- Operator to combine with next condition (AND/OR)
+    order_in_group INT,     -- Order within the group
+    PRIMARY KEY (filter_id, group_id, order_in_group),
+    FOREIGN KEY (filter_id, group_id) 
+        REFERENCES FilterGroups(filter_id, group_id)
+);
+
+
+DELIMITER //
+CREATE PROCEDURE GenerateNestedFilter(IN p_filter_id INT)
+BEGIN
+    WITH RECURSIVE GroupCTE AS (
+        -- Anchor: Root groups (no parent)
+        SELECT 
+            filter_id,
+            group_id,
+            parent_group_id,
+            group_operator,
+            group_order,
+            CAST('' AS CHAR(255)) AS condition_part,
+            0 AS depth
+        FROM FilterGroups
+        WHERE filter_id = p_filter_id AND parent_group_id IS NULL
+        
+        UNION ALL
+        
+        -- Recursive: Child groups and their conditions
+        SELECT 
+            g.filter_id,
+            g.group_id,
+            g.parent_group_id,
+            g.group_operator,
+            g.group_order,
+            CONCAT(
+                CASE 
+                    WHEN c.depth > 0 THEN CONCAT(c.condition_part, ' ', g.group_operator, ' ')
+                    ELSE ''
+                END,
+                '(',
+                -- Conditions inside the current group
+                COALESCE(
+                    (SELECT 
+                        GROUP_CONCAT(
+                            CONCAT(column_name, ' ', operator, ' ', value, ' ', logical_operator)
+                            ORDER BY order_in_group SEPARATOR ' '
+                        ) 
+                     FROM FilterConditions 
+                     WHERE filter_id = g.filter_id AND group_id = g.group_id
+                    ), 
+                    ''
+                ),
+                -- Recursive call for nested groups
+                COALESCE(
+                    (SELECT 
+                        GROUP_CONCAT(
+                            CONCAT(child.condition_part)
+                            ORDER BY child.group_order SEPARATOR ' '
+                        )
+                     FROM GroupCTE child 
+                     WHERE child.parent_group_id = g.group_id 
+                       AND child.filter_id = g.filter_id
+                    ),
+                    ''
+                ),
+                ')'
+            ),
+            c.depth + 1
+        FROM FilterGroups g
+        JOIN GroupCTE c ON g.parent_group_id = c.group_id AND g.filter_id = c.filter_id
+    )
+    -- Final assembly of the WHERE clause
+    SELECT 
+        IFNULL(
+            (SELECT 
+                GROUP_CONCAT(
+                    CONCAT(condition_part, ' ', group_operator)
+                    ORDER BY group_order SEPARATOR ' '
+                )
+             FROM GroupCTE 
+             WHERE depth = 0
+            ),
+            '1=1'
+        ) AS generated_where;
+END //
+DELIMITER ;
+
+INSERT INTO FilterGroups (filter_id, group_id, parent_group_id, group_operator, group_order)
+VALUES
+-- Root group (group_id = 1, no parent)
+(1, 1, NULL, 'AND', 1),
+
+-- Child group (group_id = 2, parent_group_id = 1)
+(1, 2, 1, 'OR', 1),
+
+-- Child group (group_id = 3, parent_group_id = 1)
+(1, 3, 1, 'AND', 2);
+
+
+
+INSERT INTO FilterConditions (filter_id, group_id, column_name, operator, value, logical_operator, order_in_group)
+VALUES
+-- Conditions for group_id = 2
+(1, 2, 'age', '>=', '25', 'AND', 1),
+(1, 2, 'country', '=', '''USA''', NULL, 2),
+
+-- Conditions for group_id = 3
+(1, 3, 'status', '=', '''active''', 'OR', 1);
