@@ -1,0 +1,105 @@
+CREATE TABLE FILTER_CONDITIONS (
+    ID NUMBER PRIMARY KEY,
+    FILTER_GROUP_ID NUMBER,
+    PARENT_GROUP_ID NUMBER, -- Reference to the parent group (for nesting)
+    COLUMN_NAME VARCHAR2(100),
+    OPERATOR VARCHAR2(20),
+    VALUE VARCHAR2(4000),
+    LOGICAL_OPERATOR VARCHAR2(10)
+);
+
+-- Group 1: (AGE > 30 AND SALARY < 50000)
+INSERT INTO FILTER_CONDITIONS (ID, FILTER_GROUP_ID, PARENT_GROUP_ID, COLUMN_NAME, OPERATOR, VALUE, LOGICAL_OPERATOR)
+VALUES (1, 1, NULL, 'AGE', '>', '30', 'AND');
+
+INSERT INTO FILTER_CONDITIONS (ID, FILTER_GROUP_ID, PARENT_GROUP_ID, COLUMN_NAME, OPERATOR, VALUE, LOGICAL_OPERATOR)
+VALUES (2, 1, NULL, 'SALARY', '<', '50000', NULL);
+
+-- Group 2: (DEPARTMENT = 'IT' AND STATUS = 'ACTIVE')
+INSERT INTO FILTER_CONDITIONS (ID, FILTER_GROUP_ID, PARENT_GROUP_ID, COLUMN_NAME, OPERATOR, VALUE, LOGICAL_OPERATOR)
+VALUES (3, 2, NULL, 'DEPARTMENT', '=', 'IT', 'AND');
+
+INSERT INTO FILTER_CONDITIONS (ID, FILTER_GROUP_ID, PARENT_GROUP_ID, COLUMN_NAME, OPERATOR, VALUE, LOGICAL_OPERATOR)
+VALUES (4, 2, NULL, 'STATUS', '=', 'ACTIVE', NULL);
+
+-- Combine Group 1 and Group 2 with OR
+INSERT INTO FILTER_CONDITIONS (ID, FILTER_GROUP_ID, PARENT_GROUP_ID, COLUMN_NAME, OPERATOR, VALUE, LOGICAL_OPERATOR)
+VALUES (5, 3, NULL, NULL, NULL, NULL, 'OR');
+
+const oracledb = require('oracledb');
+
+async function getFilterConditions() {
+    let connection;
+
+    try {
+        // Connect to the Oracle database
+        connection = await oracledb.getConnection({
+            user: 'your_username',
+            password: 'your_password',
+            connectString: 'your_connect_string'
+        });
+
+        // Query to get all filter conditions
+        const result = await connection.execute(
+            `SELECT ID, FILTER_GROUP_ID, PARENT_GROUP_ID, COLUMN_NAME, OPERATOR, VALUE, LOGICAL_OPERATOR 
+             FROM FILTER_CONDITIONS 
+             ORDER BY FILTER_GROUP_ID, ID`
+        );
+
+        // Organize conditions into a nested structure
+        const conditions = result.rows.map(row => ({
+            id: row[0],
+            filterGroupId: row[1],
+            parentGroupId: row[2],
+            columnName: row[3],
+            operator: row[4],
+            value: row[5],
+            logicalOperator: row[6]
+        }));
+
+        // Build the WHERE clause recursively
+        const buildWhereClause = (groupId, parentLogicalOperator = null) => {
+            const groupConditions = conditions.filter(cond => cond.filterGroupId === groupId);
+            let clause = '';
+
+            groupConditions.forEach((cond, index) => {
+                if (cond.columnName) {
+                    // It's a condition (e.g., AGE > 30)
+                    clause += `${cond.columnName} ${cond.operator} '${cond.value}'`;
+                } else {
+                    // It's a logical operator (e.g., AND, OR)
+                    clause += ` ${cond.logicalOperator} `;
+                }
+
+                // Handle nested groups
+                if (cond.parentGroupId !== null) {
+                    clause += buildWhereClause(cond.parentGroupId, cond.logicalOperator);
+                }
+            });
+
+            // Wrap the clause in parentheses if it's part of a nested group
+            if (parentLogicalOperator) {
+                clause = `(${clause})`;
+            }
+
+            return clause;
+        };
+
+        // Start building the WHERE clause from the root group (no parent)
+        const whereClause = buildWhereClause(3); // Start with the top-level group
+        console.log('Generated WHERE clause:', `WHERE ${whereClause}`);
+
+    } catch (err) {
+        console.error(err);
+    } finally {
+        if (connection) {
+            try {
+                await connection.close();
+            } catch (err) {
+                console.error(err);
+            }
+        }
+    }
+}
+
+getFilterConditions();
