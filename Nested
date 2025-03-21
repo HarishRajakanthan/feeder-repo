@@ -1,3 +1,81 @@
+CREATE OR REPLACE PROCEDURE GenerateNestedFilter(
+    p_filter_id IN NUMBER,
+    p_generated_where OUT CLOB
+) AS
+BEGIN
+    WITH GroupCTE AS (
+        -- Anchor: Root groups (no parent)
+        SELECT 
+            filter_id,
+            group_id,
+            parent_group_id,
+            group_operator,
+            group_order,
+            CAST('' AS VARCHAR2(4000)) AS condition_part,
+            0 AS depth
+        FROM FilterGroups
+        WHERE filter_id = p_filter_id AND parent_group_id IS NULL
+        
+        UNION ALL
+        
+        -- Recursive: Child groups and their conditions
+        SELECT 
+            g.filter_id,
+            g.group_id,
+            g.parent_group_id,
+            g.group_operator,
+            g.group_order,
+            CASE 
+                WHEN c.depth > 0 THEN c.condition_part || ' ' || g.group_operator || ' '
+                ELSE ''
+            END ||
+            '(' ||
+            -- Conditions inside the current group
+            NVL(
+                (SELECT 
+                    LISTAGG(
+                        column_name || ' ' || operator || ' ' || value || ' ' || NVL(logical_operator, ''),
+                        ' ' 
+                    ) WITHIN GROUP (ORDER BY order_in_group)
+                 FROM FilterConditions 
+                 WHERE filter_id = g.filter_id AND group_id = g.group_id
+                ), 
+                ''
+            ) ||
+            -- Recursive call for nested groups
+            NVL(
+                (SELECT 
+                    LISTAGG(
+                        child.condition_part,
+                        ' ' 
+                    ) WITHIN GROUP (ORDER BY child.group_order)
+                 FROM GroupCTE child 
+                 WHERE child.parent_group_id = g.group_id 
+                   AND child.filter_id = g.filter_id
+                ),
+                ''
+            ) ||
+            ')',
+            c.depth + 1
+        FROM FilterGroups g
+        JOIN GroupCTE c ON g.parent_group_id = c.group_id AND g.filter_id = c.filter_id
+    )
+    -- Final assembly of the WHERE clause
+    SELECT 
+        NVL(
+            (SELECT 
+                LISTAGG(
+                    condition_part || ' ' || NVL(group_operator, ''),
+                    ' ' 
+                ) WITHIN GROUP (ORDER BY group_order)
+             FROM GroupCTE 
+             WHERE depth = 0
+            ),
+            '1=1'
+        ) INTO p_generated_where
+    FROM dual;
+END;
+/
 -- Table to define groups and their hierarchy
 CREATE TABLE FilterGroups (
     filter_id INT,          -- Links to the parent filter
