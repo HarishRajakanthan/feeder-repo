@@ -1,0 +1,365 @@
+// Test case for SQL filter generator with mixed operators within a single group
+// This demonstrates how to handle cases where a group needs both AND and OR operators
+
+// Enhanced filter groups structure with support for mixed operators
+const enhancedFilterGroups = [
+  { 
+    GROUP_ID: 1, 
+    GROUP_NAME: 'Root Group', 
+    PARENT_GROUP_ID: null, 
+    OPERATOR: 'AND' 
+  },
+  { 
+    GROUP_ID: 2, 
+    GROUP_NAME: 'Mixed Operators Group', 
+    PARENT_GROUP_ID: 1, 
+    OPERATOR: 'MIXED'  // Special case for mixed operators
+  }
+];
+
+// Enhanced conditions with sub-group information
+const enhancedConditions = [
+  // Root Group condition
+  {
+    CONDITION_ID: 1,
+    GROUP_ID: 1,
+    FIELD_NAME: 'CUSTOMER_TYPE',
+    OPERATOR: '=',
+    VALUE_TYPE: 'STRING',
+    VALUE_STRING: 'PREMIUM',
+    VALUE_NUMBER: null,
+    VALUE_DATE: null,
+    VALUE_BOOLEAN: null,
+    IS_NEGATED: 0,
+    SEQUENCE_NUMBER: 1,
+    SUB_GROUP: null  // No sub-group for root conditions
+  },
+  
+  // Mixed Operators Group (Group 2) conditions
+  // First sub-group (AND)
+  {
+    CONDITION_ID: 2,
+    GROUP_ID: 2,
+    FIELD_NAME: 'TOTAL_ORDER_VALUE',
+    OPERATOR: '>',
+    VALUE_TYPE: 'NUMBER',
+    VALUE_STRING: null,
+    VALUE_NUMBER: 1000,
+    VALUE_DATE: null,
+    VALUE_BOOLEAN: null,
+    IS_NEGATED: 0,
+    SEQUENCE_NUMBER: 1,
+    SUB_GROUP: 'A',  // Sub-group A (AND)
+    SUB_GROUP_OPERATOR: 'AND'
+  },
+  {
+    CONDITION_ID: 3,
+    GROUP_ID: 2,
+    FIELD_NAME: 'PAYMENT_METHOD',
+    OPERATOR: '=',
+    VALUE_TYPE: 'STRING',
+    VALUE_STRING: 'CREDIT_CARD',
+    VALUE_NUMBER: null,
+    VALUE_DATE: null,
+    VALUE_BOOLEAN: null,
+    IS_NEGATED: 0,
+    SEQUENCE_NUMBER: 2,
+    SUB_GROUP: 'A',  // Sub-group A (AND)
+    SUB_GROUP_OPERATOR: 'AND'
+  },
+  
+  // Second sub-group (AND)
+  {
+    CONDITION_ID: 4,
+    GROUP_ID: 2,
+    FIELD_NAME: 'REGION',
+    OPERATOR: '=',
+    VALUE_TYPE: 'STRING',
+    VALUE_STRING: 'NORTH',
+    VALUE_NUMBER: null,
+    VALUE_DATE: null,
+    VALUE_BOOLEAN: null,
+    IS_NEGATED: 0,
+    SEQUENCE_NUMBER: 3,
+    SUB_GROUP: 'B',  // Sub-group B (AND)
+    SUB_GROUP_OPERATOR: 'AND'
+  },
+  {
+    CONDITION_ID: 5,
+    GROUP_ID: 2,
+    FIELD_NAME: 'LAST_ORDER_DATE',
+    OPERATOR: '>',
+    VALUE_TYPE: 'DATE',
+    VALUE_STRING: null,
+    VALUE_NUMBER: null,
+    VALUE_DATE: '2024-01-01',
+    VALUE_BOOLEAN: null,
+    IS_NEGATED: 0,
+    SEQUENCE_NUMBER: 4,
+    SUB_GROUP: 'B',  // Sub-group B (AND)
+    SUB_GROUP_OPERATOR: 'AND'
+  }
+];
+
+// Define the relationship between sub-groups (how they connect)
+const subGroupRelationships = [
+  { 
+    GROUP_ID: 2,          // Mixed Operators Group 
+    BETWEEN_SUB_GROUPS: 'OR' // Sub-groups A and B are connected with OR
+  }
+];
+
+/**
+ * Format a single condition into SQL
+ * @param {Object} condition - Filter condition object
+ * @returns {String} - Formatted SQL condition
+ */
+function formatCondition(condition) {
+  let sqlCondition = '';
+  const negation = condition.IS_NEGATED === 1 ? 'NOT ' : '';
+  
+  // Format the value based on its type
+  let formattedValue;
+  switch (condition.VALUE_TYPE) {
+    case 'STRING':
+      formattedValue = `'${condition.VALUE_STRING}'`;
+      break;
+    case 'NUMBER':
+      formattedValue = condition.VALUE_NUMBER;
+      break;
+    case 'DATE':
+      formattedValue = `TO_DATE('${condition.VALUE_DATE}', 'YYYY-MM-DD')`;
+      break;
+    case 'BOOLEAN':
+      formattedValue = condition.VALUE_BOOLEAN === 1 ? '1' : '0';
+      break;
+    case 'NULL':
+      // Special handling for NULL conditions
+      if (['IS NULL', 'IS NOT NULL'].includes(condition.OPERATOR)) {
+        return `${negation}${condition.FIELD_NAME} ${condition.OPERATOR}`;
+      }
+      formattedValue = 'NULL';
+      break;
+    default:
+      formattedValue = 'NULL';
+  }
+  
+  // Handle special operators like IN, BETWEEN, etc.
+  if (condition.OPERATOR === 'IN' || condition.OPERATOR === 'NOT IN') {
+    // For simplicity, assuming comma-separated values in VALUE_STRING
+    if (condition.VALUE_TYPE === 'STRING' && condition.VALUE_STRING) {
+      const values = condition.VALUE_STRING.split(',')
+        .map(val => `'${val.trim()}'`)
+        .join(', ');
+      sqlCondition = `${negation}${condition.FIELD_NAME} ${condition.OPERATOR} (${values})`;
+    }
+  } else if (condition.OPERATOR === 'BETWEEN') {
+    // For simplicity, assuming the range is stored in VALUE_STRING as "lower,upper"
+    if (condition.VALUE_TYPE === 'STRING' && condition.VALUE_STRING) {
+      const [lower, upper] = condition.VALUE_STRING.split(',').map(val => val.trim());
+      sqlCondition = `${negation}${condition.FIELD_NAME} BETWEEN '${lower}' AND '${upper}'`;
+    }
+  } else if (condition.OPERATOR === 'LIKE' || condition.OPERATOR === 'NOT LIKE') {
+    sqlCondition = `${negation}${condition.FIELD_NAME} ${condition.OPERATOR} ${formattedValue}`;
+  } else {
+    // Standard operators (=, >, <, >=, <=, !=)
+    sqlCondition = `${negation}${condition.FIELD_NAME} ${condition.OPERATOR} ${formattedValue}`;
+  }
+  
+  return sqlCondition;
+}
+
+/**
+ * Handle mixed operators within a group by processing sub-groups
+ * @param {Number} groupId - Group ID with mixed operators
+ * @param {Array} conditions - All filter conditions
+ * @param {Array} subGroupRelationships - Relationships between sub-groups
+ * @returns {String} - SQL clause for the mixed operators group
+ */
+function processMixedOperatorsGroup(groupId, conditions, subGroupRelationships) {
+  // Get all conditions for this group
+  const groupConditions = conditions.filter(c => c.GROUP_ID === groupId);
+  
+  // Get the relationship for this group
+  const relationship = subGroupRelationships.find(r => r.GROUP_ID === groupId);
+  if (!relationship) return '';
+  
+  // Group conditions by sub-group
+  const subGroups = {};
+  
+  groupConditions.forEach(condition => {
+    if (!condition.SUB_GROUP) return;
+    
+    if (!subGroups[condition.SUB_GROUP]) {
+      subGroups[condition.SUB_GROUP] = {
+        conditions: [],
+        operator: condition.SUB_GROUP_OPERATOR || 'AND' // Default to AND if not specified
+      };
+    }
+    
+    subGroups[condition.SUB_GROUP].conditions.push(condition);
+  });
+  
+  // Process each sub-group
+  const subGroupClauses = [];
+  
+  Object.keys(subGroups).forEach(subGroupKey => {
+    const subGroup = subGroups[subGroupKey];
+    const formattedConditions = subGroup.conditions.map(formatCondition);
+    
+    if (formattedConditions.length > 0) {
+      // Join conditions within this sub-group using its operator
+      const subGroupClause = formattedConditions.join(` ${subGroup.operator} `);
+      // Wrap in parentheses if more than one condition
+      subGroupClauses.push(formattedConditions.length > 1 ? `(${subGroupClause})` : subGroupClause);
+    }
+  });
+  
+  // Join sub-groups using the between-groups operator
+  return subGroupClauses.join(` ${relationship.BETWEEN_SUB_GROUPS} `);
+}
+
+/**
+ * Build the SQL WHERE clause recursively with support for mixed operators
+ * @param {Number} groupId - Current group ID
+ * @param {Array} groups - All filter groups
+ * @param {Array} conditions - All filter conditions
+ * @param {Array} subGroupRelationships - Relationships between sub-groups
+ * @returns {String} - SQL WHERE clause for the current group
+ */
+function buildEnhancedWhereClause(groupId, groups, conditions, subGroupRelationships) {
+  // Get the current group
+  const currentGroup = groups.find(g => g.GROUP_ID === groupId);
+  if (!currentGroup) return '';
+  
+  // Special handling for mixed operators group
+  if (currentGroup.OPERATOR === 'MIXED') {
+    return processMixedOperatorsGroup(groupId, conditions, subGroupRelationships);
+  }
+  
+  // Get direct conditions for this group
+  const directConditions = conditions.filter(c => c.GROUP_ID === groupId);
+  
+  // Get child groups for this group
+  const childGroups = groups.filter(g => g.PARENT_GROUP_ID === groupId);
+  
+  // Array to store formatted direct conditions
+  const directConditionParts = [];
+  
+  // Process direct conditions
+  directConditions.forEach(condition => {
+    directConditionParts.push(formatCondition(condition));
+  });
+  
+  // Join direct conditions with the current group's operator
+  const directConditionsClause = directConditionParts.length > 0 
+    ? directConditionParts.join(` ${currentGroup.OPERATOR} `) 
+    : '';
+  
+  // Process child groups and their conditions
+  const childGroupClauses = [];
+  
+  childGroups.forEach(childGroup => {
+    const childClause = buildEnhancedWhereClause(childGroup.GROUP_ID, groups, conditions, subGroupRelationships);
+    if (childClause) {
+      childGroupClauses.push(`(${childClause})`);
+    }
+  });
+  
+  // Join child groups with the current group's operator
+  const childGroupsClause = childGroupClauses.length > 0 
+    ? childGroupClauses.join(` ${currentGroup.OPERATOR} `) 
+    : '';
+  
+  // Combine direct conditions and child groups
+  if (directConditionsClause && childGroupsClause) {
+    return `${directConditionsClause} ${currentGroup.OPERATOR} ${childGroupsClause}`;
+  } else if (directConditionsClause) {
+    return directConditionsClause;
+  } else if (childGroupsClause) {
+    return childGroupsClause;
+  }
+  
+  return '';
+}
+
+// Function to run the enhanced test
+function runEnhancedTest(testName, groups, conditions, subGroupRelationships, rootGroupId) {
+  console.log(`\n=== Running Test: ${testName} ===`);
+  
+  // Print the group structure for better understanding
+  console.log('Group structure:');
+  groups.forEach(group => {
+    const parentName = group.PARENT_GROUP_ID 
+      ? groups.find(g => g.GROUP_ID === group.PARENT_GROUP_ID).GROUP_NAME 
+      : 'None';
+    console.log(`- ${group.GROUP_NAME} (ID: ${group.GROUP_ID}, Operator: ${group.OPERATOR}, Parent: ${parentName})`);
+  });
+  
+  // Print conditions with sub-group info for reference
+  console.log('\nConditions with sub-groups:');
+  conditions.forEach(condition => {
+    const groupName = groups.find(g => g.GROUP_ID === condition.GROUP_ID).GROUP_NAME;
+    const subGroupInfo = condition.SUB_GROUP ? `, Sub-group: ${condition.SUB_GROUP}` : '';
+    console.log(`- [${groupName}${subGroupInfo}] ${condition.FIELD_NAME} ${condition.OPERATOR} ${condition.VALUE_TYPE === 'STRING' ? condition.VALUE_STRING : 
+                condition.VALUE_TYPE === 'NUMBER' ? condition.VALUE_NUMBER : 
+                condition.VALUE_TYPE === 'DATE' ? condition.VALUE_DATE : 'NULL'}`);
+  });
+  
+  // Print sub-group relationships
+  if (subGroupRelationships && subGroupRelationships.length > 0) {
+    console.log('\nSub-group relationships:');
+    subGroupRelationships.forEach(rel => {
+      const groupName = groups.find(g => g.GROUP_ID === rel.GROUP_ID).GROUP_NAME;
+      console.log(`- Group: ${groupName}, Between Sub-groups: ${rel.BETWEEN_SUB_GROUPS}`);
+    });
+  }
+  
+  // Generate and display the WHERE clause
+  const whereClause = buildEnhancedWhereClause(rootGroupId, groups, conditions, subGroupRelationships);
+  console.log('\nGenerated WHERE clause:');
+  console.log(whereClause);
+  
+  // Complete SQL query example
+  const sqlQuery = `SELECT * FROM CUSTOMERS WHERE ${whereClause}`;
+  console.log('\nComplete SQL query:');
+  console.log(sqlQuery);
+  
+  return { whereClause, sqlQuery };
+}
+
+// Run the test with mixed operators
+console.log('======= MIXED OPERATORS WITHIN GROUP TEST =======');
+runEnhancedTest('Mixed Operators Within Same Group', enhancedFilterGroups, enhancedConditions, subGroupRelationships, 1);
+
+// Run the mixed operators group separately
+console.log('\n======= MIXED OPERATORS GROUP ONLY =======');
+runEnhancedTest('Mixed Operators Group Only', enhancedFilterGroups, enhancedConditions, subGroupRelationships, 2);
+
+console.log('\n======= TEST COMPLETE =======');
+
+// Second approach: Schema modification to support mixed operators
+console.log('\n\n======= ALTERNATIVE SCHEMA APPROACH =======');
+console.log('To properly support mixed operators within a group, the schema could be modified:');
+console.log(`
+1. Add a new table for sub-groups:
+CREATE TABLE FILTER_SUBGROUPS (
+  SUBGROUP_ID NUMBER PRIMARY KEY,
+  GROUP_ID NUMBER REFERENCES FILTER_GROUPS(GROUP_ID),
+  SUBGROUP_NAME VARCHAR2(100),
+  OPERATOR VARCHAR2(10),
+  SEQUENCE_NUMBER NUMBER
+);
+
+2. Add relationship table for connecting sub-groups:
+CREATE TABLE SUBGROUP_RELATIONSHIPS (
+  RELATIONSHIP_ID NUMBER PRIMARY KEY,
+  GROUP_ID NUMBER REFERENCES FILTER_GROUPS(GROUP_ID),
+  FROM_SUBGROUP_ID NUMBER REFERENCES FILTER_SUBGROUPS(SUBGROUP_ID),
+  TO_SUBGROUP_ID NUMBER REFERENCES FILTER_SUBGROUPS(SUBGROUP_ID),
+  OPERATOR VARCHAR2(10)
+);
+
+3. Add sub-group reference to conditions:
+ALTER TABLE FILTER_CONDITIONS ADD SUBGROUP_ID NUMBER REFERENCES FILTER_SUBGROUPS(SUBGROUP_ID);
+`);
