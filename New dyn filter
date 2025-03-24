@@ -1,0 +1,279 @@
+// Self-contained test case for SQL filter generator
+// No database connection required
+
+// Mock data that matches our sample Oracle data
+const mockFilterGroups = [
+  { 
+    GROUP_ID: 1, 
+    GROUP_NAME: 'Customer Search', 
+    PARENT_GROUP_ID: null, 
+    OPERATOR: 'AND' 
+  },
+  { 
+    GROUP_ID: 2, 
+    GROUP_NAME: 'Order Conditions', 
+    PARENT_GROUP_ID: 1, 
+    OPERATOR: 'OR' 
+  }
+];
+
+const mockFilterConditions = [
+  {
+    CONDITION_ID: 1,
+    GROUP_ID: 1,
+    FIELD_NAME: 'CUSTOMER_TYPE',
+    OPERATOR: '=',
+    VALUE_TYPE: 'STRING',
+    VALUE_STRING: 'PREMIUM',
+    VALUE_NUMBER: null,
+    VALUE_DATE: null,
+    VALUE_BOOLEAN: null,
+    IS_NEGATED: 0,
+    SEQUENCE_NUMBER: 1
+  },
+  {
+    CONDITION_ID: 2,
+    GROUP_ID: 1,
+    FIELD_NAME: 'ACTIVE_FLAG',
+    OPERATOR: '=',
+    VALUE_TYPE: 'NUMBER',
+    VALUE_STRING: null,
+    VALUE_NUMBER: 1,
+    VALUE_DATE: null,
+    VALUE_BOOLEAN: null,
+    IS_NEGATED: 0,
+    SEQUENCE_NUMBER: 2
+  },
+  {
+    CONDITION_ID: 3,
+    GROUP_ID: 2,
+    FIELD_NAME: 'TOTAL_ORDER_VALUE',
+    OPERATOR: '>',
+    VALUE_TYPE: 'NUMBER',
+    VALUE_STRING: null,
+    VALUE_NUMBER: 1000,
+    VALUE_DATE: null,
+    VALUE_BOOLEAN: null,
+    IS_NEGATED: 0,
+    SEQUENCE_NUMBER: 1
+  },
+  {
+    CONDITION_ID: 4,
+    GROUP_ID: 2,
+    FIELD_NAME: 'LAST_ORDER_DATE',
+    OPERATOR: '>',
+    VALUE_TYPE: 'DATE',
+    VALUE_STRING: null,
+    VALUE_NUMBER: null,
+    VALUE_DATE: '2024-01-01',
+    VALUE_BOOLEAN: null,
+    IS_NEGATED: 0,
+    SEQUENCE_NUMBER: 2
+  }
+];
+
+// Additional test cases
+const additionalTestCases = [
+  // Test case with IN operator
+  {
+    CONDITION_ID: 5,
+    GROUP_ID: 1,
+    FIELD_NAME: 'REGION',
+    OPERATOR: 'IN',
+    VALUE_TYPE: 'STRING',
+    VALUE_STRING: 'NORTH,SOUTH,EAST',
+    VALUE_NUMBER: null,
+    VALUE_DATE: null,
+    VALUE_BOOLEAN: null,
+    IS_NEGATED: 0,
+    SEQUENCE_NUMBER: 3
+  },
+  // Test case with IS NULL
+  {
+    CONDITION_ID: 6,
+    GROUP_ID: 2,
+    FIELD_NAME: 'DISCOUNT_CODE',
+    OPERATOR: 'IS NULL',
+    VALUE_TYPE: 'NULL',
+    VALUE_STRING: null,
+    VALUE_NUMBER: null,
+    VALUE_DATE: null,
+    VALUE_BOOLEAN: null,
+    IS_NEGATED: 0,
+    SEQUENCE_NUMBER: 3
+  },
+  // Test case with LIKE
+  {
+    CONDITION_ID: 7,
+    GROUP_ID: 1,
+    FIELD_NAME: 'EMAIL',
+    OPERATOR: 'LIKE',
+    VALUE_TYPE: 'STRING',
+    VALUE_STRING: '%@gmail.com',
+    VALUE_NUMBER: null,
+    VALUE_DATE: null,
+    VALUE_BOOLEAN: null,
+    IS_NEGATED: 0,
+    SEQUENCE_NUMBER: 4
+  },
+  // Test case with NOT
+  {
+    CONDITION_ID: 8,
+    GROUP_ID: 2,
+    FIELD_NAME: 'PAYMENT_METHOD',
+    OPERATOR: '=',
+    VALUE_TYPE: 'STRING',
+    VALUE_STRING: 'CREDIT_CARD',
+    VALUE_NUMBER: null,
+    VALUE_DATE: null,
+    VALUE_BOOLEAN: null,
+    IS_NEGATED: 1,
+    SEQUENCE_NUMBER: 4
+  }
+];
+
+/**
+ * Format a single condition into SQL
+ * @param {Object} condition - Filter condition object
+ * @returns {String} - Formatted SQL condition
+ */
+function formatCondition(condition) {
+  let sqlCondition = '';
+  const negation = condition.IS_NEGATED === 1 ? 'NOT ' : '';
+  
+  // Format the value based on its type
+  let formattedValue;
+  switch (condition.VALUE_TYPE) {
+    case 'STRING':
+      formattedValue = `'${condition.VALUE_STRING}'`;
+      break;
+    case 'NUMBER':
+      formattedValue = condition.VALUE_NUMBER;
+      break;
+    case 'DATE':
+      formattedValue = `TO_DATE('${condition.VALUE_DATE}', 'YYYY-MM-DD')`;
+      break;
+    case 'BOOLEAN':
+      formattedValue = condition.VALUE_BOOLEAN === 1 ? '1' : '0';
+      break;
+    case 'NULL':
+      // Special handling for NULL conditions
+      if (['IS NULL', 'IS NOT NULL'].includes(condition.OPERATOR)) {
+        return `${negation}${condition.FIELD_NAME} ${condition.OPERATOR}`;
+      }
+      formattedValue = 'NULL';
+      break;
+    default:
+      formattedValue = 'NULL';
+  }
+  
+  // Handle special operators like IN, BETWEEN, etc.
+  if (condition.OPERATOR === 'IN' || condition.OPERATOR === 'NOT IN') {
+    // For simplicity, assuming comma-separated values in VALUE_STRING
+    if (condition.VALUE_TYPE === 'STRING' && condition.VALUE_STRING) {
+      const values = condition.VALUE_STRING.split(',')
+        .map(val => `'${val.trim()}'`)
+        .join(', ');
+      sqlCondition = `${negation}${condition.FIELD_NAME} ${condition.OPERATOR} (${values})`;
+    }
+  } else if (condition.OPERATOR === 'BETWEEN') {
+    // For simplicity, assuming the range is stored in VALUE_STRING as "lower,upper"
+    if (condition.VALUE_TYPE === 'STRING' && condition.VALUE_STRING) {
+      const [lower, upper] = condition.VALUE_STRING.split(',').map(val => val.trim());
+      sqlCondition = `${negation}${condition.FIELD_NAME} BETWEEN '${lower}' AND '${upper}'`;
+    }
+  } else if (condition.OPERATOR === 'LIKE' || condition.OPERATOR === 'NOT LIKE') {
+    sqlCondition = `${negation}${condition.FIELD_NAME} ${condition.OPERATOR} ${formattedValue}`;
+  } else {
+    // Standard operators (=, >, <, >=, <=, !=)
+    sqlCondition = `${negation}${condition.FIELD_NAME} ${condition.OPERATOR} ${formattedValue}`;
+  }
+  
+  return sqlCondition;
+}
+
+/**
+ * Build the SQL WHERE clause recursively
+ * @param {Number} groupId - Current group ID
+ * @param {Array} groups - All filter groups
+ * @param {Array} conditions - All filter conditions
+ * @returns {String} - SQL WHERE clause for the current group
+ */
+function buildWhereClause(groupId, groups, conditions) {
+  // Get the current group
+  const currentGroup = groups.find(g => g.GROUP_ID === groupId);
+  if (!currentGroup) return '';
+  
+  // Get direct conditions for this group
+  const directConditions = conditions.filter(c => c.GROUP_ID === groupId);
+  
+  // Get child groups for this group
+  const childGroups = groups.filter(g => g.PARENT_GROUP_ID === groupId);
+  
+  const conditionParts = [];
+  
+  // Process direct conditions
+  directConditions.forEach(condition => {
+    conditionParts.push(formatCondition(condition));
+  });
+  
+  // Process child groups recursively
+  childGroups.forEach(childGroup => {
+    const childClause = buildWhereClause(childGroup.GROUP_ID, groups, conditions);
+    if (childClause) {
+      conditionParts.push(`(${childClause})`);
+    }
+  });
+  
+  // Join all parts with the group operator
+  if (conditionParts.length === 0) return '';
+  return conditionParts.join(` ${currentGroup.OPERATOR} `);
+}
+
+// Function to run the test
+function runTest(testName, groups, conditions, rootGroupId) {
+  console.log(`\n=== Running Test: ${testName} ===`);
+  
+  const whereClause = buildWhereClause(rootGroupId, groups, conditions);
+  console.log('Generated WHERE clause:');
+  console.log(whereClause);
+  
+  // Complete SQL query example
+  const sqlQuery = `SELECT * FROM CUSTOMERS WHERE ${whereClause}`;
+  console.log('\nComplete SQL query:');
+  console.log(sqlQuery);
+  
+  return { whereClause, sqlQuery };
+}
+
+// Run the basic test case
+console.log('======= SQL FILTER GENERATOR TEST =======');
+runTest('Basic Sample Data', mockFilterGroups, mockFilterConditions, 1);
+
+// Run test with additional complex conditions
+console.log('\n======= EXTENDED TEST CASES =======');
+
+// Test 1: With IN operator
+const testConditions1 = [...mockFilterConditions, additionalTestCases[0]];
+runTest('With IN Operator', mockFilterGroups, testConditions1, 1);
+
+// Test 2: With NULL check
+const testConditions2 = [...mockFilterConditions, additionalTestCases[1]];
+runTest('With NULL Check', mockFilterGroups, testConditions2, 1);
+
+// Test 3: With LIKE operator
+const testConditions3 = [...mockFilterConditions, additionalTestCases[2]];
+runTest('With LIKE Operator', mockFilterGroups, testConditions3, 1);
+
+// Test 4: With NOT condition
+const testConditions4 = [...mockFilterConditions, additionalTestCases[3]];
+runTest('With NOT Condition', mockFilterGroups, testConditions4, 1);
+
+// Test 5: All conditions combined
+const allConditions = [...mockFilterConditions, ...additionalTestCases];
+runTest('All Conditions Combined', mockFilterGroups, allConditions, 1);
+
+// Test 6: Specific subgroup only
+runTest('Subgroup Only', mockFilterGroups, mockFilterConditions, 2);
+
+console.log('\n======= TEST COMPLETE =======');
