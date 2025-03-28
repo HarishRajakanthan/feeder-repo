@@ -1,0 +1,134 @@
+import sqlite3
+import sqlparse
+import pandas as pd
+from typing import Dict, List, Tuple
+
+def extract_query_info(query: str) -> Dict[str, str]:
+    """
+    Extract filter conditions and joined tables from a SQL query.
+    
+    Args:
+        query (str): SQL query to analyze
+    
+    Returns:
+        Dict[str, str]: Dictionary containing extracted information
+    """
+    # Parse the SQL query
+    parsed = sqlparse.parse(query)[0]
+    
+    # Initialize result dictionary
+    query_info = {
+        'original_query': query,
+        'tables': [],
+        'join_conditions': [],
+        'where_conditions': []
+    }
+    
+    # Extract tables and joins
+    from_seen = False
+    join_seen = False
+    where_seen = False
+    
+    for token in parsed.tokens:
+        # Extract FROM and JOIN tables
+        if isinstance(token, sqlparse.sql.IdentifierList):
+            for identifier in token.get_identifiers():
+                # Check for table aliases
+                table_name = str(identifier).split()
+                if len(table_name) > 1:
+                    query_info['tables'].append(table_name[0])
+        
+        # Look for JOIN keywords and their conditions
+        if isinstance(token, sqlparse.sql.Comparison):
+            if join_seen:
+                query_info['join_conditions'].append(str(token))
+        
+        # Look for WHERE conditions
+        if where_seen and isinstance(token, sqlparse.sql.Comparison):
+            query_info['where_conditions'].append(str(token))
+        
+        # Track keywords
+        if token.ttype is sqlparse.tokens.Keyword:
+            if str(token).upper() == 'FROM':
+                from_seen = True
+            elif str(token).upper() == 'JOIN':
+                join_seen = True
+            elif str(token).upper() == 'WHERE':
+                where_seen = True
+                join_seen = False  # Reset join_seen when WHERE is encountered
+    
+    return query_info
+
+def analyze_sql_queries(db_path: str, table_name: str, query_column: str) -> pd.DataFrame:
+    """
+    Retrieve SQL queries from a database table and analyze them.
+    
+    Args:
+        db_path (str): Path to the SQLite database
+        table_name (str): Name of the table containing SQL queries
+        query_column (str): Name of the column containing SQL queries
+    
+    Returns:
+        pd.DataFrame: DataFrame containing query analysis results
+    """
+    # Connect to the database
+    conn = sqlite3.connect(db_path)
+    
+    try:
+        # Retrieve SQL queries
+        query = f"SELECT {query_column} FROM {table_name}"
+        queries = pd.read_sql_query(query, conn)
+        
+        # Analyze each query
+        query_analyses = []
+        for query in queries[query_column]:
+            try:
+                query_info = extract_query_info(query)
+                query_analyses.append(query_info)
+            except Exception as e:
+                print(f"Error analyzing query: {query}")
+                print(f"Error details: {e}")
+        
+        # Convert to DataFrame
+        df_analyses = pd.DataFrame(query_analyses)
+        
+        # Convert list columns to strings for easier viewing
+        df_analyses['tables'] = df_analyses['tables'].apply(lambda x: ', '.join(x) if x else '')
+        df_analyses['join_conditions'] = df_analyses['join_conditions'].apply(lambda x: '; '.join(x) if x else '')
+        df_analyses['where_conditions'] = df_analyses['where_conditions'].apply(lambda x: '; '.join(x) if x else '')
+        
+        return df_analyses
+    
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return pd.DataFrame()
+    
+    finally:
+        # Close the connection
+        conn.close()
+
+def main():
+    # Example of how to use the function
+    try:
+        # Replace with your actual database path, table name, and query column
+        db_path = 'your_database.db'
+        table_name = 'your_query_table'
+        query_column = 'sql_query'
+        
+        # Analyze queries and create a DataFrame
+        query_results_df = analyze_sql_queries(db_path, table_name, query_column)
+        
+        # Display the results
+        print(query_results_df)
+        
+        # Optional: save to CSV if needed
+        # query_results_df.to_csv('query_analysis_results.csv', index=False)
+    
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+if __name__ == '__main__':
+    main()
+
+# Note: You'll need to install the following libraries
+# pip install sqlparse pandas
