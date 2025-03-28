@@ -1,159 +1,58 @@
-import re
-import pandas as pd
-import cx_Oracle
+import os
+from collections import defaultdict
+import hashlib
+import csv
 
-def extract_oracle_query_info(query: str) -> dict:
-    """
-    Enhanced method to extract query information for Oracle SQL queries.
-    
-    Args:
-        query (str): SQL query to analyze
-    
-    Returns:
-        dict: Dictionary containing extracted information
-    """
-    # Normalize the query by removing extra whitespaces
-    query = re.sub(r'\s+', ' ', query.strip())
-    
-    # Initialize result dictionary
-    query_info = {
-        'original_query': query,
-        'tables': [],
-        'join_conditions': [],
-        'where_conditions': []
-    }
-    
-    # Extract tables using regex
-    # Look for FROM and JOIN clauses
-    from_table_matches = re.findall(r'\bFROM\s+(\w+)(?:\s+\w+)?', query, re.IGNORECASE)
-    join_table_matches = re.findall(r'\bJOIN\s+(\w+)(?:\s+\w+)?', query, re.IGNORECASE)
-    
-    # Combine and deduplicate tables
-    query_info['tables'] = list(dict.fromkeys(from_table_matches + join_table_matches))
-    
-    # Extract JOIN conditions
-    join_condition_matches = re.findall(r'\bON\s+\((.*?)\)', query, re.IGNORECASE)
-    query_info['join_conditions'] = join_condition_matches
-    
-    # Extract WHERE conditions
-    where_match = re.search(r'\bWHERE\s+(.+?)(?:\bORDER BY|\bGROUP BY|$)', query, re.IGNORECASE)
-    if where_match:
-        # Split conditions, being careful with nested conditions
-        where_conditions = []
-        current_condition = ''
-        paren_count = 0
-        
-        for char in where_match.group(1):
-            if char == '(':
-                paren_count += 1
-            elif char == ')':
-                paren_count -= 1
-            
-            current_condition += char
-            
-            # Split on AND/OR only if not inside parentheses
-            if paren_count == 0 and (char == 'D' and current_condition.strip().upper().endswith(' AND ')):
-                where_conditions.append(current_condition.strip()[:-4])
-                current_condition = ''
-            elif paren_count == 0 and (char == 'R' and current_condition.strip().upper().endswith(' OR ')):
-                where_conditions.append(current_condition.strip()[:-3])
-                current_condition = ''
-        
-        # Add the last condition
-        if current_condition.strip():
-            where_conditions.append(current_condition.strip())
-        
-        query_info['where_conditions'] = where_conditions
-    
-    return query_info
+SQL_DIR = "path/to/sql/files"
+REPORT_FILE = "common_sql_blocks_report.csv"
 
-def analyze_oracle_queries(connection_string: str, table_name: str, query_column: str) -> pd.DataFrame:
-    """
-    Retrieve SQL queries from an Oracle database table and analyze them.
-    
-    Args:
-        connection_string (str): Oracle database connection string
-        table_name (str): Name of the table containing SQL queries
-        query_column (str): Name of the column containing SQL queries
-    
-    Returns:
-        pd.DataFrame: DataFrame containing query analysis results
-    """
-    # Establish Oracle database connection
-    try:
-        # Establish connection
-        connection = cx_Oracle.connect(connection_string)
-        
-        # Create cursor
-        cursor = connection.cursor()
-        
-        # Retrieve queries
-        query = f"SELECT {query_column} FROM {table_name}"
-        cursor.execute(query)
-        
-        # Fetch all queries
-        queries = cursor.fetchall()
-        
-        # Analyze queries
-        query_analyses = []
-        for (query,) in queries:
-            try:
-                query_info = extract_oracle_query_info(query)
-                query_analyses.append(query_info)
-            except Exception as e:
-                print(f"Error analyzing query: {query}")
-                print(f"Error details: {e}")
-        
-        # Convert to DataFrame
-        df_analyses = pd.DataFrame(query_analyses)
-        
-        # Convert list columns to strings for easier viewing
-        df_analyses['tables'] = df_analyses['tables'].apply(lambda x: ', '.join(x) if x else '')
-        df_analyses['join_conditions'] = df_analyses['join_conditions'].apply(lambda x: '; '.join(x) if x else '')
-        df_analyses['where_conditions'] = df_analyses['where_conditions'].apply(lambda x: '; '.join(x) if x else '')
-        
-        return df_analyses
-    
-    except cx_Oracle.Error as error:
-        print(f"Oracle-Error: {error}")
-        return pd.DataFrame()
-    
-    finally:
-        # Close cursor and connection
-        if 'cursor' in locals():
-            cursor.close()
-        if 'connection' in locals():
-            connection.close()
+def normalize_sql_block(block):
+    """Normalize SQL block by stripping spaces and converting to lowercase"""
+    return "\n".join(line.strip().lower() for line in block if line.strip())
 
-def main():
-    # Example usage
-    try:
-        # Oracle connection string format: 
-        # username/password@hostname:port/service_name
-        connection_string = 'your_username/your_password@hostname:port/service_name'
-        table_name = 'your_query_table'
-        query_column = 'sql_query'
+def get_sql_blocks(filename):
+    """Extract SQL blocks from a file"""
+    with open(filename, "r", encoding="utf-8") as file:
+        sql_blocks = []
+        current_block = []
         
-        # Analyze queries
-        query_results_df = analyze_oracle_queries(
-            connection_string, 
-            table_name, 
-            query_column
-        )
+        for line in file:
+            line = line.strip()
+            if line:
+                current_block.append(line)
+            else:
+                if current_block:
+                    sql_blocks.append(normalize_sql_block(current_block))
+                    current_block = []
         
-        # Display results
-        print(query_results_df)
-        
-        # Optional: save to CSV
-        # query_results_df.to_csv('oracle_query_analysis.csv', index=False)
+        if current_block:
+            sql_blocks.append(normalize_sql_block(current_block))
     
-    except Exception as e:
-        print(f"An error occurred: {e}")
+    return sql_blocks
 
-if __name__ == '__main__':
-    main()
+# Dictionary to store SQL block occurrences
+block_map = defaultdict(set)
 
-# Prerequisites:
-# 1. Install required libraries:
-#    pip install cx_Oracle pandas
-# 2. Install Oracle Instant Client or have proper Oracle client libraries
+# Read all SQL files and extract blocks
+for filename in os.listdir(SQL_DIR):
+    if filename.endswith(".sql"):
+        file_path = os.path.join(SQL_DIR, filename)
+        sql_blocks = get_sql_blocks(file_path)
+        
+        for block in sql_blocks:
+            block_hash = hashlib.md5(block.encode()).hexdigest()  # Hash to uniquely identify blocks
+            block_map[block_hash].add(filename)
+
+# Filter out unique blocks (only keep repeated ones)
+common_blocks = {block: files for block, files in block_map.items() if len(files) > 1}
+
+# Generate a CSV report
+with open(REPORT_FILE, "w", newline="", encoding="utf-8") as csvfile:
+    writer = csv.writer(csvfile)
+    writer.writerow(["Common SQL Block", "Occurrence Count", "Files Containing It"])
+    
+    for block_hash, files in sorted(common_blocks.items(), key=lambda x: len(x[1]), reverse=True):
+        sample_block = next(k for k, v in block_map.items() if hashlib.md5(k.encode()).hexdigest() == block_hash)
+        writer.writerow([sample_block, len(files), ", ".join(files)])
+
+print(f"Report generated: {REPORT_FILE}")
