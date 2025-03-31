@@ -52,7 +52,10 @@ with open(REPORT_FILE, "w", newline="", encoding="utf-8") as csvfile:
     writer.writerow(["Common SQL Block", "Occurrence Count", "Files Containing It"])
     
     for block_hash, files in sorted(common_blocks.items(), key=lambda x: len(x[1]), reverse=True):
-        sample_block = next(k for k, v in block_map.items() if hashlib.md5(k.encode()).hexdigest() == block_hash)
+        sample_block = next((k for k in block_map if hashlib.md5(k.encode()).hexdigest() == block_hash), None)
+
+if sample_block is None:
+    sample_block = "[Error: SQL block not found]"
         writer.writerow([sample_block, len(files), ", ".join(files)])
 
 print(f"Report generated: {REPORT_FILE}")
