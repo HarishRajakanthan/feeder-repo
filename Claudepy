@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+"""
+SQL Similarity Analyzer
+
+This script analyzes a directory of SQL files to find common lines,
+count their occurrences, and identify which files contain each common line.
+
+Usage:
+    1. Edit the variables in the main() function to configure:
+       - directory: Path to your SQL files
+       - min_files: Minimum number of files a line must appear in
+       - output_file: Name of the HTML report
+       - generate_csv: Whether to create a CSV report
+    
+    2. Run the script:
+       python sql_similarity_analyzer.py
+"""
+
+import os
+import re
+import sys
+import time
+from collections import defaultdict
+from pathlib import Path
+from datetime import datetime
+
+def normalize_line(line):
+    """Normalize SQL line for better comparison by removing extra whitespace."""
+    # Remove comments if they exist in the line
+    if '--' in line:
+        line = line.split('--')[0]
+    
+    # Normalize whitespace and convert to lowercase for better matching
+    return re.sub(r'\s+', ' ', line).strip().lower()
+
+def analyze_sql_files(directory_path, min_file_count=2):
+    """
+    Analyze SQL files in the given directory to find common lines.
+    
+    Args:
+        directory_path: Path to directory containing SQL files
+        min_file_count: Minimum number of files a line must appear in to be included
+        
+    Returns:
+        A dictionary mapping normalized lines to their occurrence data
+    """
+    # Dictionary to store line occurrences: { line -> {'count': int, 'files': set() } }
+    line_map = defaultdict(lambda: {'count': 0, 'files': set()})
+    total_files = 0
+    processed_files = 0
+    
+    # Get all SQL files in the directory (recursive)
+    sql_files = list(Path(directory_path).glob('**/*.sql'))
+    total_files = len(sql_files)
+    
+    print(f"Found {total_files} SQL files for analysis.")
+    start_time = time.time()
+    
+    # Process each file
+    for file_path in sql_files:
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Get filename for reporting
+            filename = str(file_path.relative_to(directory_path))
+            
+            # Split into lines, filter out empty lines and full-line comments
+            lines = [line.strip() for line in content.split('\n')]
+            lines = [line for line in lines if line and not line.strip().startswith('--')]
+            
+            # Record each line
+            for line in lines:
+                normalized = normalize_line(line)
+                if not normalized:
+                    continue
+                    
+                line_map[normalized]['count'] += 1
+                line_map[normalized]['files'].add(filename)
+                
+            processed_files += 1
+            if processed_files % 100 == 0:
+                elapsed = time.time() - start_time
+                print(f"Processed {processed_files}/{total_files} files ({processed_files/total_files*100:.1f}%) - Elapsed time: {elapsed:.1f}s")
+                
+        except Exception as e:
+            print(f"Error processing file {file_path}: {e}")
+    
+    # Filter lines that appear in at least min_file_count files
+    filtered_lines = {
+        line: data for line, data in line_map.items() 
+        if len(data['files']) >= min_file_count
+    }
+    
+    print(f"Analysis complete. Found {len(filtered_lines)} common lines that appear in at least {min_file_count} files.")
+    return filtered_lines
+
+def generate_html_report(line_data, output_file, min_file_count=2):
+    """Generate an HTML report of the analysis results."""
+    # Convert dictionary to a list for sorting
+    lines = [
+        {
+            'line': line,
+            'count': data['count'],
+            'file_count': len(data['files']),
+            'files': sorted(list(data['files']))
+        }
+        for line, data in line_data.items()
+    ]
+    
+    # Sort by number of files containing the line (descending)
+    lines.sort(key=lambda x: x['file_count'], reverse=True)
+    
+    # Calculate total unique files
+    all_files = set()
+    for item in lines:
+        all_files.update(item['files'])
+    
+    # Generate HTML report
+    report_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>SQL Similarity Analysis Report</title>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }}
+        h1, h2 {{ color: #333; }}
+        table {{ border-collapse: collapse; width: 100%; margin-top: 20px; }}
+        th, td {{ padding: 10px; text-align: left; border: 1px solid #ddd; }}
+        th {{ background-color: #4CAF50; color: white; position: sticky; top: 0; }}
+        tr:nth-child(even) {{ background-color: #f9f9f9; }}
+        .files-list {{ max-height: 150px; overflow-y: auto; }}
+        .search-container {{ margin: 20px 0; }}
+        #filter-input {{ padding: 8px; width: 300px; }}
+        .highlight {{ background-color: yellow; }}
+        .line-cell {{ font-family: monospace; max-width: 600px; overflow-x: auto; white-space: nowrap; }}
+        .metrics {{ display: flex; justify-content: space-between; }}
+        .metric-box {{ background-color: #f0f0f0; padding: 15px; border-radius: 5px; flex: 1; margin: 0 10px; text-align: center; }}
+        .metric-number {{ font-size: 24px; font-weight: bold; color: #4CAF50; }}
+    </style>
+</head>
+<body>
+    <h1>SQL Similarity Analysis Report</h1>
+    <p>Generated on: {report_date}</p>
+    
+    <div class="metrics">
+        <div class="metric-box">
+            <div class="metric-number">{len(all_files)}</div>
+            <div>Total SQL Files</div>
+        </div>
+        <div class="metric-box">
+            <div class="metric-number">{len(lines)}</div>
+            <div>Common Lines</div>
+        </div>
+        <div class="metric-box">
+            <div class="metric-number">{min_file_count}+</div>
+            <div>Min. File Appearances</div>
+        </div>
+    </div>
+    
+    <div class="search-container">
+        <input type="text" id="filter-input" placeholder="Search for lines, tables, or filenames...">
+        <button onclick="filterTable()">Search</button>
+        <button onclick="clearFilter()">Clear</button>
+    </div>
+    
+    <h2>Common SQL Lines</h2>
+    <table id="results-table">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>SQL Line</th>
+                <th>In Files</th>
+                <th>Occurrences</th>
+                <th>Files</th>
+            </tr>
+        </thead>
+        <tbody>
+"""
+
+    # Add table rows
+    for i, item in enumerate(lines, 1):
+        file_list = "<br>".join(item['files'])
+        html_content += f"""
+        <tr>
+            <td>{i}</td>
+            <td class="line-cell">{item['line']}</td>
+            <td>{item['file_count']}</td>
+            <td>{item['count']}</td>
+            <td class="files-list">{file_list}</td>
+        </tr>"""
+
+    # Add JavaScript for filtering functionality
+    html_content += """
+        </tbody>
+    </table>
+
+    <script>
+    function filterTable() {
+        const input = document.getElementById('filter-input');
+        const filter = input.value.toLowerCase();
+        const table = document.getElementById('results-table');
+        const rows = table.getElementsByTagName('tr');
+        
+        for (let i = 1; i < rows.length; i++) {
+            const line = rows[i].getElementsByTagName('td')[1].textContent.toLowerCase();
+            const files = rows[i].getElementsByTagName('td')[4].textContent.toLowerCase();
+            
+            if (line.includes(filter) || files.includes(filter)) {
+                rows[i].style.display = '';
+            } else {
+                rows[i].style.display = 'none';
+            }
+        }
+    }
+    
+    function clearFilter() {
+        document.getElementById('filter-input').value = '';
+        const table = document.getElementById('results-table');
+        const rows = table.getElementsByTagName('tr');
+        
+        for (let i = 1; i < rows.length; i++) {
+            rows[i].style.display = '';
+        }
+    }
+    
+    // Add event listener for Enter key
+    document.getElementById('filter-input').addEventListener('keyup', function(event) {
+        if (event.key === 'Enter') {
+            filterTable();
+        }
+    });
+    </script>
+</body>
+</html>
+"""
+
+    # Write the HTML report to file
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write(html_content)
+    
+    print(f"Report generated successfully: {output_file}")
+    
+def generate_csv_report(line_data, output_file):
+    """Generate a CSV report of the analysis results."""
+    import csv
+    
+    # Prepare data for CSV
+    rows = []
+    for line, data in line_data.items():
+        rows.append([
+            line, 
+            len(data['files']),
+            data['count'],
+            ", ".join(sorted(list(data['files'])))
+        ])
+    
+    # Sort by number of files (descending)
+    rows.sort(key=lambda x: x[1], reverse=True)
+    
+    # Write to CSV
+    with open(output_file, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['SQL Line', 'Appears In # Files', 'Total Occurrences', 'Files'])
+        writer.writerows(rows)
+    
+    print(f"CSV report generated successfully: {output_file}")
+
+def main():
+    # Simple variables to configure the script (edit these values)
+    directory = "/path/to/sql/files"  # Directory containing SQL files to analyze
+    min_files = 2                     # Minimum number of files a line must appear in
+    output_file = "sql_similarity_report.html"  # Output HTML report filename
+    generate_csv = True               # Set to True to generate a CSV report
+    
+    if not os.path.isdir(directory):
+        print(f"Error: {directory} is not a valid directory")
+        return 1
+    
+    # Analyze SQL files
+    print(f"Analyzing SQL files in {directory}...")
+    start_time = time.time()
+    line_data = analyze_sql_files(directory, min_files)
+    elapsed = time.time() - start_time
+    print(f"Analysis completed in {elapsed:.2f} seconds")
+    
+    # Generate reports
+    generate_html_report(line_data, output_file, min_files)
+    
+    if generate_csv:
+        csv_output = output_file.replace('.html', '.csv')
+        generate_csv_report(line_data, csv_output)
+    
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
