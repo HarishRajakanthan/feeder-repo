@@ -1,0 +1,467 @@
+#!/usr/bin/env python3
+"""
+SQL Block Similarity Analyzer
+
+This script analyzes a directory of SQL files to find common blocks of code,
+count their occurrences, and identify which files contain each common block.
+
+Usage:
+    1. Edit the variables in the main() function to configure:
+       - directory: Path to your SQL files
+       - min_files: Minimum number of files a block must appear in
+       - min_block_lines: Minimum number of lines for a block to be considered
+       - output_file: Name of the HTML report
+       - generate_csv: Whether to create a CSV report
+    
+    2. Run the script:
+       python sql_block_similarity_analyzer.py
+"""
+
+import os
+import re
+import sys
+import time
+from collections import defaultdict
+from pathlib import Path
+from datetime import datetime
+import hashlib
+
+def normalize_line(line):
+    """Normalize SQL line for better comparison by removing extra whitespace."""
+    # Remove comments if they exist in the line
+    if '--' in line:
+        line = line.split('--')[0]
+    
+    # Normalize whitespace and convert to lowercase for better matching
+    return re.sub(r'\s+', ' ', line).strip().lower()
+
+def find_common_blocks(files_content, min_block_lines=3, min_file_count=2):
+    """
+    Find common blocks of SQL code across multiple files.
+    
+    Args:
+        files_content: Dictionary mapping filenames to file content
+        min_block_lines: Minimum number of consecutive lines for a block
+        min_file_count: Minimum number of files a block must appear in
+        
+    Returns:
+        A dictionary mapping block hashes to their data
+    """
+    # First parse all files into normalized lines
+    files_lines = {}
+    for filename, content in files_content.items():
+        lines = content.split('\n')
+        normalized_lines = []
+        for line in lines:
+            normalized = normalize_line(line)
+            if normalized:  # Skip empty lines and comments
+                normalized_lines.append(normalized)
+        files_lines[filename] = normalized_lines
+    
+    # Find all possible blocks of at least min_block_lines length
+    block_map = defaultdict(lambda: {'count': 0, 'files': set(), 'block': []})
+    
+    for filename, lines in files_lines.items():
+        for i in range(len(lines) - min_block_lines + 1):
+            for block_length in range(min_block_lines, min(30, len(lines) - i + 1)):  # Cap max block size at 30 lines
+                block = lines[i:i+block_length]
+                block_text = '\n'.join(block)
+                block_hash = hashlib.md5(block_text.encode()).hexdigest()
+                
+                if block_hash not in block_map or filename not in block_map[block_hash]['files']:
+                    block_map[block_hash]['block'] = block
+                    block_map[block_hash]['count'] += 1
+                    block_map[block_hash]['files'].add(filename)
+    
+    # Filter blocks that appear in at least min_file_count files
+    filtered_blocks = {
+        block_hash: data for block_hash, data in block_map.items() 
+        if len(data['files']) >= min_file_count
+    }
+    
+    # Remove redundant sub-blocks (optional, can be computationally expensive)
+    non_redundant_blocks = remove_redundant_blocks(filtered_blocks)
+    
+    return non_redundant_blocks
+
+def remove_redundant_blocks(blocks):
+    """
+    Remove blocks that are completely contained within larger blocks
+    that appear in the same set of files.
+    """
+    block_hashes = list(blocks.keys())
+    blocks_to_remove = set()
+    
+    for i in range(len(block_hashes)):
+        hash_i = block_hashes[i]
+        if hash_i in blocks_to_remove:
+            continue
+            
+        block_i = blocks[hash_i]
+        block_i_text = '\n'.join(block_i['block'])
+        files_i = block_i['files']
+        
+        for j in range(len(block_hashes)):
+            if i == j or block_hashes[j] in blocks_to_remove:
+                continue
+                
+            hash_j = block_hashes[j]
+            block_j = blocks[hash_j]
+            block_j_text = '\n'.join(block_j['block'])
+            files_j = block_j['files']
+            
+            # If both blocks appear in exactly the same files
+            if files_i == files_j:
+                # Check if one block is contained within the other
+                if block_i_text in block_j_text:
+                    blocks_to_remove.add(hash_i)
+                    break
+                elif block_j_text in block_i_text:
+                    blocks_to_remove.add(hash_j)
+    
+    # Return blocks without the redundant ones
+    return {
+        hash_val: blocks[hash_val] 
+        for hash_val in blocks 
+        if hash_val not in blocks_to_remove
+    }
+
+def analyze_sql_files(directory_path, min_block_lines=3, min_file_count=2):
+    """
+    Analyze SQL files in the given directory to find common blocks.
+    
+    Args:
+        directory_path: Path to directory containing SQL files
+        min_block_lines: Minimum number of consecutive lines for a block
+        min_file_count: Minimum number of files a block must appear in
+        
+    Returns:
+        A dictionary mapping block hashes to their occurrence data
+    """
+    # Get all SQL files in the directory (recursive)
+    sql_files = list(Path(directory_path).glob('**/*.sql'))
+    total_files = len(sql_files)
+    
+    print(f"Found {total_files} SQL files for analysis.")
+    start_time = time.time()
+    
+    # Read all file contents
+    files_content = {}
+    for file_path in sql_files:
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Get filename for reporting
+            filename = str(file_path.relative_to(directory_path))
+            files_content[filename] = content
+            
+        except Exception as e:
+            print(f"Error reading file {file_path}: {e}")
+    
+    print(f"Read {len(files_content)} SQL files. Finding common blocks...")
+    
+    # Find common blocks
+    common_blocks = find_common_blocks(files_content, min_block_lines, min_file_count)
+    
+    print(f"Analysis complete. Found {len(common_blocks)} common blocks that appear in at least {min_file_count} files.")
+    return common_blocks
+
+def generate_html_report(block_data, output_file, min_file_count=2, min_block_lines=3):
+    """Generate an HTML report of the analysis results."""
+    # Convert dictionary to a list for sorting
+    blocks = [
+        {
+            'hash': block_hash,
+            'block': data['block'],
+            'file_count': len(data['files']),
+            'files': sorted(list(data['files']))
+        }
+        for block_hash, data in block_data.items()
+    ]
+    
+    # Sort by number of files containing the block (descending) and then by block length (descending)
+    blocks.sort(key=lambda x: (x['file_count'], len(x['block'])), reverse=True)
+    
+    # Calculate total unique files
+    all_files = set()
+    for item in blocks:
+        all_files.update(item['files'])
+    
+    # Generate HTML report
+    report_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>SQL Block Similarity Analysis Report</title>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }}
+        h1, h2 {{ color: #333; }}
+        table {{ border-collapse: collapse; width: 100%; margin-top: 20px; }}
+        th, td {{ padding: 10px; text-align: left; border: 1px solid #ddd; }}
+        th {{ background-color: #4CAF50; color: white; position: sticky; top: 0; }}
+        tr:nth-child(even) {{ background-color: #f9f9f9; }}
+        .files-list {{ max-height: 150px; overflow-y: auto; }}
+        .search-container {{ margin: 20px 0; }}
+        #filter-input {{ padding: 8px; width: 300px; }}
+        .highlight {{ background-color: yellow; }}
+        .block-cell {{ font-family: monospace; max-width: 800px; overflow-x: auto; white-space: pre; }}
+        .metrics {{ display: flex; justify-content: space-between; }}
+        .metric-box {{ background-color: #f0f0f0; padding: 15px; border-radius: 5px; flex: 1; margin: 0 10px; text-align: center; }}
+        .metric-number {{ font-size: 24px; font-weight: bold; color: #4CAF50; }}
+        .collapsible {{ 
+            background-color: #f1f1f1;
+            color: #333;
+            cursor: pointer;
+            padding: 10px;
+            width: 100%;
+            border: none;
+            text-align: left;
+            outline: none;
+            font-weight: bold;
+        }}
+        .active, .collapsible:hover {{ background-color: #e8e8e8; }}
+        .block-content {{ 
+            padding: 0 18px;
+            display: none;
+            overflow: hidden;
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+        }}
+        #sort-options {{
+            margin: 10px 0;
+        }}
+    </style>
+</head>
+<body>
+    <h1>SQL Block Similarity Analysis Report</h1>
+    <p>Generated on: {report_date}</p>
+    
+    <div class="metrics">
+        <div class="metric-box">
+            <div class="metric-number">{len(all_files)}</div>
+            <div>Total SQL Files</div>
+        </div>
+        <div class="metric-box">
+            <div class="metric-number">{len(blocks)}</div>
+            <div>Common Blocks</div>
+        </div>
+        <div class="metric-box">
+            <div class="metric-number">{min_file_count}+</div>
+            <div>Min. File Appearances</div>
+        </div>
+        <div class="metric-box">
+            <div class="metric-number">{min_block_lines}+</div>
+            <div>Min. Block Lines</div>
+        </div>
+    </div>
+    
+    <div class="search-container">
+        <input type="text" id="filter-input" placeholder="Search for SQL content or filenames...">
+        <button onclick="filterBlocks()">Search</button>
+        <button onclick="clearFilter()">Clear</button>
+        
+        <div id="sort-options">
+            <label>Sort by: </label>
+            <select id="sort-select" onchange="sortBlocks()">
+                <option value="files-desc">Number of files (descending)</option>
+                <option value="files-asc">Number of files (ascending)</option>
+                <option value="size-desc">Block size (descending)</option>
+                <option value="size-asc">Block size (ascending)</option>
+            </select>
+        </div>
+    </div>
+    
+    <h2>Common SQL Blocks</h2>
+    <div id="blocks-container">
+"""
+
+    # Add blocks
+    for i, item in enumerate(blocks, 1):
+        block_text = '\n'.join(item['block'])
+        file_list = "<br>".join(item['files'])
+        
+        html_content += f"""
+        <button class="collapsible">Block #{i} - {len(item['block'])} lines, found in {item['file_count']} files</button>
+        <div class="block-content">
+            <h3>SQL Block:</h3>
+            <pre class="block-cell">{block_text}</pre>
+            <h3>Found in Files:</h3>
+            <div class="files-list">{file_list}</div>
+        </div>
+"""
+
+    # Add JavaScript for filtering and collapsible functionality
+    html_content += """
+    </div>
+
+    <script>
+    // Add event listeners for collapsible blocks
+    var coll = document.getElementsByClassName("collapsible");
+    for (var i = 0; i < coll.length; i++) {
+        coll[i].addEventListener("click", function() {
+            this.classList.toggle("active");
+            var content = this.nextElementSibling;
+            if (content.style.display === "block") {
+                content.style.display = "none";
+            } else {
+                content.style.display = "block";
+            }
+        });
+    }
+    
+    // Filter blocks based on search input
+    function filterBlocks() {
+        const input = document.getElementById('filter-input');
+        const filter = input.value.toLowerCase();
+        const blocks = document.getElementsByClassName("collapsible");
+        
+        for (let i = 0; i < blocks.length; i++) {
+            const blockContent = blocks[i].nextElementSibling;
+            const sqlText = blockContent.querySelector(".block-cell").textContent.toLowerCase();
+            const files = blockContent.querySelector(".files-list").textContent.toLowerCase();
+            
+            if (sqlText.includes(filter) || files.includes(filter)) {
+                blocks[i].style.display = "";
+                blockContent.style.display = "none"; // Reset collapsible state
+            } else {
+                blocks[i].style.display = "none";
+                blockContent.style.display = "none";
+            }
+        }
+    }
+    
+    // Clear search filter
+    function clearFilter() {
+        document.getElementById('filter-input').value = '';
+        const blocks = document.getElementsByClassName("collapsible");
+        
+        for (let i = 0; i < blocks.length; i++) {
+            blocks[i].style.display = "";
+            blocks[i].nextElementSibling.style.display = "none"; // Reset collapsible state
+        }
+    }
+    
+    // Add event listener for Enter key
+    document.getElementById('filter-input').addEventListener('keyup', function(event) {
+        if (event.key === 'Enter') {
+            filterBlocks();
+        }
+    });
+    
+    // Sort blocks
+    function sortBlocks() {
+        const container = document.getElementById('blocks-container');
+        const sortSelect = document.getElementById('sort-select');
+        const sortValue = sortSelect.value;
+        
+        const blocks = Array.from(document.getElementsByClassName("collapsible"));
+        const blockContents = Array.from(document.getElementsByClassName("block-content"));
+        
+        // Parse block information
+        const blockPairs = blocks.map((block, index) => {
+            const content = blockContents[index];
+            const text = block.textContent;
+            const numFiles = parseInt(text.match(/found in (\d+) files/)[1]);
+            const numLines = parseInt(text.match(/(\d+) lines/)[1]);
+            
+            return {
+                block: block,
+                content: content,
+                files: numFiles,
+                lines: numLines
+            };
+        });
+        
+        // Sort based on selected option
+        switch (sortValue) {
+            case 'files-desc':
+                blockPairs.sort((a, b) => b.files - a.files);
+                break;
+            case 'files-asc':
+                blockPairs.sort((a, b) => a.files - b.files);
+                break;
+            case 'size-desc':
+                blockPairs.sort((a, b) => b.lines - a.lines);
+                break;
+            case 'size-asc':
+                blockPairs.sort((a, b) => a.lines - b.lines);
+                break;
+        }
+        
+        // Reorder DOM elements
+        container.innerHTML = '';
+        blockPairs.forEach(pair => {
+            container.appendChild(pair.block);
+            container.appendChild(pair.content);
+        });
+    }
+    </script>
+</body>
+</html>
+"""
+
+    # Write the HTML report to file
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write(html_content)
+    
+    print(f"Report generated successfully: {output_file}")
+    
+def generate_csv_report(block_data, output_file):
+    """Generate a CSV report of the analysis results."""
+    import csv
+    
+    # Prepare data for CSV
+    rows = []
+    for block_hash, data in block_data.items():
+        block_text = '\n'.join(data['block'])
+        rows.append([
+            block_text, 
+            len(data['files']),
+            len(data['block']),
+            ", ".join(sorted(list(data['files'])))
+        ])
+    
+    # Sort by number of files (descending)
+    rows.sort(key=lambda x: x[1], reverse=True)
+    
+    # Write to CSV
+    with open(output_file, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['SQL Block', 'Appears In # Files', 'Block Size (Lines)', 'Files'])
+        writer.writerows(rows)
+    
+    print(f"CSV report generated successfully: {output_file}")
+
+def main():
+    # Simple variables to configure the script (edit these values)
+    directory = "/path/to/sql/files"  # Directory containing SQL files to analyze
+    min_files = 2                     # Minimum number of files a block must appear in
+    min_block_lines = 3               # Minimum number of consecutive lines for a block
+    output_file = "sql_block_similarity_report.html"  # Output HTML report filename
+    generate_csv = True               # Set to True to generate a CSV report
+    
+    if not os.path.isdir(directory):
+        print(f"Error: {directory} is not a valid directory")
+        return 1
+    
+    # Analyze SQL files
+    print(f"Analyzing SQL files in {directory}...")
+    start_time = time.time()
+    block_data = analyze_sql_files(directory, min_block_lines, min_files)
+    elapsed = time.time() - start_time
+    print(f"Analysis completed in {elapsed:.2f} seconds")
+    
+    # Generate reports
+    generate_html_report(block_data, output_file, min_files, min_block_lines)
+    
+    if generate_csv:
+        csv_output = output_file.replace('.html', '.csv')
+        generate_csv_report(block_data, csv_output)
+    
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
