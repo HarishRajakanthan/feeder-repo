@@ -1,0 +1,63 @@
+import os
+import re
+import glob
+
+def extract_where_conditions(sql_text):
+    """
+    Extract all WHERE conditions from SQL text.
+    Handles multiple WHERE clauses and complex nested conditions.
+    """
+    # This regex pattern looks for WHERE clauses while handling:
+    # 1. Case insensitivity
+    # 2. Potential whitespace variations
+    # 3. Nested subqueries with their own WHERE clauses
+    # 4. WHERE clauses in different SQL constructs (SELECT, UPDATE, DELETE, etc.)
+    
+    # First, let's find all WHERE clauses (including those in subqueries)
+    where_pattern = re.compile(r'\bWHERE\b(.*?)(?:\b(?:GROUP BY|HAVING|ORDER BY|LIMIT|OFFSET|UNION|INTERSECT|EXCEPT|MINUS|FOR UPDATE|CONNECT BY|START WITH|;)|\Z)', 
+                              re.IGNORECASE | re.DOTALL)
+    
+    where_matches = where_pattern.findall(sql_text)
+    
+    # Process each WHERE clause to clean up and format
+    results = []
+    for where_clause in where_matches:
+        # Clean up the clause (remove extra whitespace, etc.)
+        cleaned_clause = where_clause.strip()
+        if cleaned_clause:
+            results.append(cleaned_clause)
+    
+    return results
+
+def process_sql_files(input_directory, output_file):
+    """
+    Process all SQL files in the input directory and write WHERE conditions to the output file.
+    """
+    # Get list of all SQL files in the directory
+    sql_files = glob.glob(os.path.join(input_directory, "*.sql"))
+    
+    with open(output_file, 'w') as out_file:
+        for file_path in sql_files:
+            file_name = os.path.basename(file_path)
+            
+            # Read SQL content from file
+            with open(file_path, 'r') as sql_file:
+                sql_content = sql_file.read()
+            
+            # Extract WHERE conditions
+            where_conditions = extract_where_conditions(sql_content)
+            
+            # Write to output file
+            if where_conditions:
+                out_file.write(f"File: {file_name}\n")
+                for i, condition in enumerate(where_conditions, 1):
+                    out_file.write(f"  WHERE condition #{i}: {condition}\n")
+                out_file.write("\n")  # Empty line between files
+
+if __name__ == "__main__":
+    # Configure these paths
+    input_dir = "path/to/sql/files"  # Directory containing SQL files
+    output_file = "where_conditions.txt"  # Output file name
+    
+    process_sql_files(input_dir, output_file)
+    print(f"Extracted WHERE conditions from {input_dir} to {output_file}")
