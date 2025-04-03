@@ -1,0 +1,72 @@
+const express = require('express');
+const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+const app = express();
+const port = 3000;
+
+// Middleware to parse JSON bodies
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Route 1: Returns a PDF file
+app.get('/pdf', (req, res) => {
+  const pdfPath = path.join(__dirname, 'files', 'sample.pdf');
+  
+  // Check if the file exists
+  fs.access(pdfPath, fs.constants.F_OK, (err) => {
+    if (err) {
+      return res.status(404).json({ error: 'PDF file not found' });
+    }
+    
+    // Set appropriate headers
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename=sample.pdf');
+    
+    // Create read stream and pipe to response
+    const fileStream = fs.createReadStream(pdfPath);
+    fileStream.pipe(res);
+  });
+});
+
+// Route 2: GET request to an external API
+app.get('/api/data', async (req, res) => {
+  try {
+    // Replace with your actual API endpoint
+    const response = await axios.get('https://api.example.com/data');
+    
+    // Return the JSON response
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error fetching data:', error.message);
+    res.status(500).json({ 
+      error: 'Failed to fetch data from external API',
+      message: error.message 
+    });
+  }
+});
+
+// Route 3: POST request to an external API
+app.post('/api/submit', async (req, res) => {
+  try {
+    // Get data from request body
+    const requestData = req.body;
+    
+    // Replace with your actual API endpoint
+    const response = await axios.post('https://api.example.com/submit', requestData);
+    
+    // Return the JSON response
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error submitting data:', error.message);
+    res.status(500).json({ 
+      error: 'Failed to submit data to external API',
+      message: error.message 
+    });
+  }
+});
+
+// Start the server
+app.listen(port, () => {
+  console.log(`Server running at http://localhost:${port}`);
+});
