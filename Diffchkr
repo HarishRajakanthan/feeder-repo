@@ -1,0 +1,102 @@
+import os
+import re
+import difflib
+from collections import defaultdict
+
+def extract_filename_and_timestamp(filename):
+    """Extract the base filename and timestamp from a file name."""
+    match = re.match(r'(.+)_(\d+)\.sql', filename)
+    if match:
+        base_name, timestamp = match.groups()
+        return base_name, int(timestamp)
+    return None, None
+
+def group_files_by_base_name(directory):
+    """Group files by their base name."""
+    grouped_files = defaultdict(list)
+    
+    for filename in os.listdir(directory):
+        if filename.endswith('.sql'):
+            base_name, timestamp = extract_filename_and_timestamp(filename)
+            if base_name:
+                grouped_files[base_name].append((timestamp, filename))
+    
+    # Sort each group by timestamp
+    for base_name in grouped_files:
+        grouped_files[base_name].sort()  # Sort by timestamp (first element of tuple)
+    
+    return grouped_files
+
+def get_added_lines(old_content, new_content):
+    """Identify lines that were added in the new version."""
+    old_lines = old_content.splitlines()
+    new_lines = new_content.splitlines()
+    
+    differ = difflib.Differ()
+    diff = list(differ.compare(old_lines, new_lines))
+    
+    added_lines = []
+    line_num = 0
+    
+    for i, line in enumerate(diff):
+        # Lines starting with '+ ' are added in the new file
+        if line.startswith('+ '):
+            added_lines.append((line_num, line[2:]))
+        # Lines starting with '  ' or '- ' correspond to the old file's line numbers
+        if line.startswith('  ') or line.startswith('- '):
+            line_num += 1
+    
+    return added_lines
+
+def analyze_file_changes(directory):
+    """Analyze changes between different versions of the same SQL file."""
+    grouped_files = group_files_by_base_name(directory)
+    
+    for base_name, files in grouped_files.items():
+        print(f"\n=== Analyzing changes for {base_name} ===")
+        
+        if len(files) < 2:
+            print(f"Only one version found for {base_name}. Nothing to compare.")
+            continue
+        
+        # Compare each file with its previous version
+        for i in range(1, len(files)):
+            prev_timestamp, prev_filename = files[i-1]
+            curr_timestamp, curr_filename = files[i]
+            
+            prev_path = os.path.join(directory, prev_filename)
+            curr_path = os.path.join(directory, curr_filename)
+            
+            try:
+                with open(prev_path, 'r', encoding='utf-8') as f:
+                    prev_content = f.read()
+                
+                with open(curr_path, 'r', encoding='utf-8') as f:
+                    curr_content = f.read()
+                
+                added_lines = get_added_lines(prev_content, curr_content)
+                
+                print(f"\nChanges from {prev_filename} to {curr_filename}:")
+                if added_lines:
+                    print(f"Lines added in {curr_filename}:")
+                    for line_num, content in added_lines:
+                        print(f"Line {line_num}: {content}")
+                else:
+                    print("No lines were added.")
+                    
+            except Exception as e:
+                print(f"Error comparing {prev_filename} and {curr_filename}: {str(e)}")
+
+if __name__ == "__main__":
+    import sys
+    
+    if len(sys.argv) != 2:
+        print("Usage: python sql_diff_tracker.py <directory_path>")
+        sys.exit(1)
+    
+    directory = sys.argv[1]
+    if not os.path.isdir(directory):
+        print(f"Error: {directory} is not a valid directory")
+        sys.exit(1)
+    
+    analyze_file_changes(directory)
