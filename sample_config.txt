@@ -1,0 +1,8 @@
+[EntityA]
+sub_entities = SubA1, SubA2, SubA3
+
+[EntityB]
+sub_entities = SubB1, SubB2
+
+[EntityC]
+sub_entities = SubC1
