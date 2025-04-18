@@ -1,0 +1,18 @@
+replacements = {
+    'A': {1: 100, 3: 300},
+    'B': {'x': 'replaced_x', 'y': 'replaced_y'},
+    'C': {10: 1000, 50: 5000}
+}
+
+# Function to apply replacements dynamically
+def apply_replacements(dataframe, replacement_dict):
+    df_copy = dataframe.copy()
+    
+    for column, value_map in replacement_dict.items():
+        if column in df_copy.columns:
+            df_copy[column] = df_copy[column].replace(value_map)
+    
+    return df_copy
+
+# Apply the replacements
+result_df = apply_replacements(df, replacements)
