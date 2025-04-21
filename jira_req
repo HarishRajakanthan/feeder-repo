@@ -1,0 +1,24 @@
+import asyncio
+import aiohttp
+import pandas as pd
+
+df = pd.DataFrame({'id': range(1, 1001)})  # example: 1000 rows
+
+# Limit to 50 concurrent requests
+CONCURRENT_REQUESTS = 50
+semaphore = asyncio.Semaphore(CONCURRENT_REQUESTS)
+
+def build_url(row):
+    return f"https://example.com/api/data?id={row['id']}"
+
+async def fetch(session, url):
+    async with semaphore:
+        async with session.get(url) as response:
+            return await response.text()
+
+async def process_dataframe(df):
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch(session, build_url(row)) for _, row in df.iterrows()]
+        df['response'] = await asyncio.gather(*tasks)
+
+asyncio.run(process_dataframe(df))
