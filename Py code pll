@@ -1,0 +1,74 @@
+import pandas as pd
+import requests
+import json
+from concurrent.futures import ThreadPoolExecutor
+import time
+
+# Disable SSL verification warnings if you're setting verify=False
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Sample function to call API endpoint and extract value from JSON response
+def call_api(value):
+    # Replace with your actual API endpoint
+    url = f"https://your-api-endpoint.com/data/{value}"
+    
+    try:
+        # Set verify=False to disable SSL verification
+        response = requests.get(url, verify=False, timeout=10)
+        response.raise_for_status()  # Raise exception for 4XX/5XX responses
+        
+        # Parse JSON response and extract the value you need
+        # Adjust the key path based on your API response structure
+        result = response.json().get('result', None)
+        return result
+    except Exception as e:
+        print(f"Error calling API for value {value}: {str(e)}")
+        return None
+
+# Function to process data in parallel using ThreadPoolExecutor
+def process_dataframe_parallel(df, input_col, output_col, max_workers=10):
+    """
+    Process a DataFrame column in parallel and create a new column with results.
+    
+    Args:
+        df: Pandas DataFrame
+        input_col: Column name containing values to be processed
+        output_col: New column name for results
+        max_workers: Maximum number of parallel workers
+        
+    Returns:
+        DataFrame with new column added
+    """
+    start_time = time.time()
+    print(f"Starting parallel processing with {max_workers} workers...")
+    
+    # Create a copy of the dataframe to avoid modifying the original
+    result_df = df.copy()
+    
+    # Get values to process
+    values = df[input_col].tolist()
+    
+    # Process in parallel
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = list(executor.map(call_api, values))
+    
+    # Add results as a new column
+    result_df[output_col] = results
+    
+    elapsed_time = time.time() - start_time
+    print(f"Processing completed in {elapsed_time:.2f} seconds")
+    
+    return result_df
+
+# Example usage
+if __name__ == "__main__":
+    # Create or load your DataFrame
+    df = pd.DataFrame({
+        'a': ['value1', 'value2', 'value3', 'value4', 'value5']
+    })
+    
+    # Process the DataFrame to create column 'b' based on 'a'
+    df = process_dataframe_parallel(df, 'a', 'b', max_workers=5)
+    
+    print(df.head())
