@@ -1,0 +1,16 @@
+import re
+
+s = " - run run run - hit hit hit - ?Expected: Player dies"
+
+# Split by " - " while stripping and ignoring empty parts
+parts = [part.strip() for part in s.split(" - ") if part.strip()]
+
+result = []
+for part in parts:
+    if '?Expected:' in part:
+        step_part, expected_part = part.split('?Expected:', 1)
+        result.append({"step": step_part.strip(), "expected": expected_part.strip()})
+    else:
+        result.append({"step": part.strip(), "expected": ""})
+
+print(result)
