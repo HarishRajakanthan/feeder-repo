@@ -1,0 +1,53 @@
+import re
+
+def parse_steps_expected(input_string):
+    """
+    Parses a string with steps separated by ' - ' and an optional
+    '?Expected:' suffix into a list of dictionaries.
+
+    Args:
+        input_string: The string to parse.
+                      Format: " - step1 - step2 - ?Expected: outcome_for_step2 "
+
+    Returns:
+        A list of dictionaries, where each dict has "step" and "expected" keys.
+        Example: [{"step": "step1", "expected": ""},
+                  {"step": "step2", "expected": "outcome_for_step2"}]
+    """
+    output = []
+    step_separator = " - "
+    expected_prefix = "?Expected:"
+
+    # Split the string by the step separator
+    # Filter out empty strings that might result from leading/trailing separators
+    parts = [part.strip() for part in input_string.split(step_separator) if part.strip()]
+
+    for part in parts:
+        if part.startswith(expected_prefix):
+            # If a part starts with ?Expected:, it belongs to the *previous* step
+            if output: # Check if there is a previous step dictionary
+                expected_value = part[len(expected_prefix):].strip()
+                output[-1]["expected"] = expected_value
+            else:
+                # Handle cases where ?Expected: appears without a preceding step (optional)
+                print(f"Warning: Found '{expected_prefix}' without a preceding step: '{part}'")
+        else:
+            # This part is a step description
+            output.append({"step": part, "expected": ""})
+
+    return output
+
+# --- Example Usage ---
+test_string = " - run run run - hit hit hit - ?Expected: Player dies "
+parsed_data = parse_steps_expected(test_string)
+print(parsed_data)
+
+# --- Another Example ---
+test_string_2 = " - Walk - Jump - Crouch - ?Expected: Character is hidden "
+parsed_data_2 = parse_steps_expected(test_string_2)
+print(parsed_data_2)
+
+# --- Example with no Expected ---
+test_string_3 = " - Look left - Look right "
+parsed_data_3 = parse_steps_expected(test_string_3)
+print(parsed_data_3)
