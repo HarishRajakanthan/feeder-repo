@@ -1,0 +1,29 @@
+import pandas as pd
+
+# Sample extracted pairs: list of (testcase_name, testcases_string)
+data = [
+    ("TESTCASENAME1", "TC1,TC2"),
+    ("TESTCASENAME2", "TC1,TC3"),
+    ("TESTCASENAME3", "TC2"),
+]
+
+# Convert to DataFrame
+df = pd.DataFrame(data, columns=["testcasename", "testcases"])
+
+# Explode the testcases into individual rows
+df["testcases"] = df["testcases"].str.split(",")
+df = df.explode("testcases")
+
+# Optional: strip whitespace
+df["testcases"] = df["testcases"].str.strip()
+
+# Sort by both columns
+df = df.sort_values(by=["testcases", "testcasename"])
+
+# Group by 'testcases' and aggregate 'testcasename' as comma-separated string
+grouped = df.groupby("testcases")["testcasename"].apply(lambda x: ",".join(x)).reset_index()
+
+# Rename columns for clarity
+grouped.columns = ["testcases", "testcasenames"]
+
+print(grouped)
