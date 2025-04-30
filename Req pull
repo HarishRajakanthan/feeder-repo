@@ -1,0 +1,29 @@
+import json
+
+# Example JSON (replace this with your actual JSON response)
+json_data = {
+    "id": 1,
+    "name": "Sample Test",
+    "status": "active",
+    "testcases": ["TC1", "TC2"],
+    "extra": {
+        "name": "Nested",
+        "testcases": []
+    }
+}
+
+# Convert JSON to pretty-printed string
+pretty_json = json.dumps(json_data, indent=2)
+
+# Split into lines
+lines = pretty_json.splitlines()
+
+# Look for two consecutive lines with 'name' and 'testcases'
+for i in range(len(lines) - 1):
+    line1 = lines[i]
+    line2 = lines[i + 1]
+    if (("name" in line1 and "testcases" in line2) or
+        ("testcases" in line1 and "name" in line2)):
+        print("Match found:")
+        print(line1)
+        print(line2)
