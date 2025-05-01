@@ -1,0 +1,84 @@
+That's a good question. Since the error occurs at the end of your code execution (rather than crashing your program), it's likely happening during cleanup or when a task is being finalized. Here's how you can identify where to catch the error:
+
+### 1. Add a global exception handler for asyncio tasks
+
+This solution will help you catch and identify unhandled exceptions in asyncio tasks:
+
+```python
+import asyncio
+import traceback
+
+# Add this near the start of your main script
+def handle_task_exception(task):
+    try:
+        # This retrieves the exception if it exists
+        task.result()
+    except asyncio.CancelledError:
+        pass  # Task was cancelled, this is normal
+    except Exception as e:
+        # Print detailed information about the exception
+        print(f"Task {task.get_name()} raised an exception: {e.__class__.__name__}: {e}")
+        print(traceback.format_exc())
+
+# Register the handler to run when tasks are done
+asyncio.get_event_loop().set_exception_handler(lambda loop, context: 
+    print(f"Asyncio exception: {context['message']}\n"
+          f"Exception: {context.get('exception')}\n"
+          f"Task: {context.get('task')}\n"
+          f"Future: {context.get('future')}"))
+```
+
+### 2. Find the specific task causing the error
+
+Once you know which task is causing the issue, you can wrap that specific operation with a try/except block. If it's happening during Playwright's cleanup, wrap your Playwright context manager:
+
+```python
+async def run_playwright():
+    try:
+        async with async_playwright() as p:
+            # Your Playwright code
+            pass
+    except NotImplementedError as e:
+        # This will catch the error during Playwright cleanup
+        print(f"Suppressed NotImplementedError: {e}")
+
+# Call this function instead of using async_playwright directly
+```
+
+### 3. Look for pending tasks at shutdown
+
+The error might be in a dangling task. Add this code before your program exits:
+
+```python
+async def main():
+    # Your existing code
+    
+    # Before exiting, check for pending tasks
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    for task in tasks:
+        try:
+            print(f"Cancelling task: {task.get_name()}")
+            task.cancel()
+        except Exception as e:
+            print(f"Error cancelling task {task.get_name()}: {e}")
+
+    # Wait for all tasks to complete with a timeout
+    if tasks:
+        await asyncio.wait(tasks, timeout=5)
+```
+
+### 4. Inspect the specific error location in your code
+
+Based on your traceback, the error is in `asyncio.create_subprocess_exec()`. If you're using this function directly in your code, wrap those specific calls in try/except:
+
+```python
+async def run_subprocess():
+    try:
+        # If you're calling create_subprocess_exec somewhere
+        proc = await asyncio.create_subprocess_exec(...)
+    except NotImplementedError:
+        # Handle or suppress the error
+        print("Subprocess creation not implemented on this platform")
+```
+
+Would any of these approaches work for your codebase? If you can share a bit more about the structure of your code, I can provide more specific guidance.
