@@ -1,0 +1,57 @@
+import aiohttp
+import asyncio
+import time
+from tqdm import tqdm
+from collections import deque
+
+results = {}
+
+# Track timestamps of requests to enforce per-minute rate limiting
+request_times = deque()
+RATE_LIMIT_PER_MINUTE = 100  # set based on actual header value if known
+SEMAPHORE_LIMIT = 10  # max concurrent requests
+
+sem = asyncio.Semaphore(SEMAPHORE_LIMIT)
+
+async def rate_limited_fetch(session, url, idx):
+    global request_times
+
+    async with sem:  # throttle concurrent requests
+        # Clean up old timestamps older than 60 seconds
+        now = time.time()
+        while request_times and now - request_times[0] > 60:
+            request_times.popleft()
+
+        # Wait if we're about to exceed the limit
+        if len(request_times) >= RATE_LIMIT_PER_MINUTE:
+            sleep_time = 60 - (now - request_times[0])
+            await asyncio.sleep(sleep_time)
+
+        try:
+            async with session.get(url, timeout=10) as response:
+                response.raise_for_status()
+                
+                # Read rate limit headers if needed
+                remaining_minute = response.headers.get('x-ratelimit-remaining-minute')
+                remaining_month = response.headers.get('x-ratelimit-remaining-month')
+                
+                if remaining_minute is not None and int(remaining_minute) <= 1:
+                    await asyncio.sleep(60)  # Cooldown before retrying more
+
+                request_times.append(time.time())  # Log this request
+                data = await response.json()
+                return idx, data
+        except Exception as e:
+            return idx, str(e)
+
+async def run_all(urls):
+    connector = aiohttp.TCPConnector(limit=100)
+    timeout = aiohttp.ClientTimeout(total=60)
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+        tasks = [rate_limited_fetch(session, url, idx) for idx, url in enumerate(urls)]
+        for coro in tqdm(asyncio.as_completed(tasks), total=len(tasks)):
+            idx, result = await coro
+            results[idx] = result
+
+# Example use:
+# asyncio.run(run_all(df['url'].tolist()))
