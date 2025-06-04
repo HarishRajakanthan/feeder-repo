@@ -1,0 +1,73 @@
+<!-- Replace Jersey 2.x with Jersey 3.x -->
+<dependency>
+    <groupId>org.glassfish.jersey.containers</groupId>
+    <artifactId>jersey-container-servlet</artifactId>
+    <version>3.1.0</version>
+</dependency>
+<dependency>
+    <groupId>org.glassfish.jersey.inject</groupId>
+    <artifactId>jersey-hk2</artifactId>
+    <version>3.1.0</version>
+</dependency>
+<dependency>
+    <groupId>org.glassfish.jersey.media</groupId>
+    <artifactId>jersey-media-json-jackson</artifactId>
+    <version>3.1.0</version>
+</dependency>
+<dependency>
+    <groupId>org.glassfish.hk2</groupId>
+    <artifactId>hk2-locator</artifactId>
+    <version>3.0.3</version>
+</dependency>
+
+
+<servlet>
+    <servlet-name>ServletAdapter</servlet-name>
+    <!-- Change this line -->
+    <servlet-class>org.glassfish.jersey.servlet.ServletContainer</servlet-class>
+    <init-param>
+        <param-name>jakarta.ws.rs.Application</param-name>
+        <param-value>your.application.class.path.ResourceConfig</param-value>
+    </init-param>
+    <load-on-startup>1</load-on-startup>
+</servlet>
+
+import jakarta.ws.rs.ApplicationPath;
+import org.glassfish.jersey.server.ResourceConfig;
+
+@ApplicationPath("/resources")
+public class MyApplication extends ResourceConfig {
+    public MyApplication() {
+        packages("your.rest.package.name");
+    }
+}
+
+
+<dependencies>
+    <!-- Jakarta Servlet API -->
+    <dependency>
+        <groupId>jakarta.servlet</groupId>
+        <artifactId>jakarta.servlet-api</artifactId>
+        <version>5.0.0</version>
+        <scope>provided</scope>
+    </dependency>
+    
+    <!-- Jersey 3.x for Jakarta EE -->
+    <dependency>
+        <groupId>org.glassfish.jersey.containers</groupId>
+        <artifactId>jersey-container-servlet</artifactId>
+        <version>3.1.0</version>
+    </dependency>
+    
+    <dependency>
+        <groupId>org.glassfish.jersey.inject</groupId>
+        <artifactId>jersey-hk2</artifactId>
+        <version>3.1.0</version>
+    </dependency>
+    
+    <dependency>
+        <groupId>org.glassfish.jersey.media</groupId>
+        <artifactId>jersey-media-json-jackson</artifactId>
+        <version>3.1.0</version>
+    </dependency>
+</dependencies>
