@@ -1,0 +1,210 @@
+package com.example.filters;
+
+import jakarta.servlet.*;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.util.logging.Logger;
+
+/**
+ * Container Request Filter using Jakarta Servlet API
+ * This filter demonstrates common request filtering operations
+ */
+public class ContainerRequestFilter implements Filter {
+    
+    private static final Logger logger = Logger.getLogger(ContainerRequestFilter.class.getName());
+    
+    private String allowedOrigin;
+    private boolean logRequests;
+    
+    @Override
+    public void init(FilterConfig filterConfig) throws ServletException {
+        // Initialize filter parameters from web.xml
+        allowedOrigin = filterConfig.getInitParameter("allowedOrigin");
+        String logParam = filterConfig.getInitParameter("logRequests");
+        logRequests = "true".equalsIgnoreCase(logParam);
+        
+        logger.info("ContainerRequestFilter initialized with allowedOrigin: " + allowedOrigin);
+    }
+    
+    @Override
+    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
+            throws IOException, ServletException {
+        
+        HttpServletRequest httpRequest = (HttpServletRequest) request;
+        HttpServletResponse httpResponse = (HttpServletResponse) response;
+        
+        // Log request details if enabled
+        if (logRequests) {
+            logRequestDetails(httpRequest);
+        }
+        
+        // Example 1: CORS handling
+        handleCORS(httpRequest, httpResponse);
+        
+        // Example 2: Security headers
+        addSecurityHeaders(httpResponse);
+        
+        // Example 3: Request validation
+        if (!isValidRequest(httpRequest)) {
+            httpResponse.sendError(HttpServletResponse.SC_BAD_REQUEST, "Invalid request");
+            return;
+        }
+        
+        // Example 4: Rate limiting check (simplified)
+        if (isRateLimited(httpRequest)) {
+            httpResponse.sendError(HttpServletResponse.SC_TOO_MANY_REQUESTS, "Rate limit exceeded");
+            return;
+        }
+        
+        // Add custom attributes to request
+        request.setAttribute("filterProcessed", true);
+        request.setAttribute("processedTimestamp", System.currentTimeMillis());
+        
+        // Continue with the filter chain
+        chain.doFilter(request, response);
+    }
+    
+    private void logRequestDetails(HttpServletRequest request) {
+        String logMessage = String.format(
+            "Request: %s %s from %s - User-Agent: %s",
+            request.getMethod(),
+            request.getRequestURI(),
+            request.getRemoteAddr(),
+            request.getHeader("User-Agent")
+        );
+        logger.info(logMessage);
+    }
+    
+    private void handleCORS(HttpServletRequest request, HttpServletResponse response) {
+        String origin = request.getHeader("Origin");
+        
+        if (allowedOrigin != null && allowedOrigin.equals(origin)) {
+            response.setHeader("Access-Control-Allow-Origin", origin);
+            response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+            response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+            response.setHeader("Access-Control-Allow-Credentials", "true");
+        }
+        
+        // Handle preflight requests
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
+            response.setStatus(HttpServletResponse.SC_OK);
+        }
+    }
+    
+    private void addSecurityHeaders(HttpServletResponse response) {
+        response.setHeader("X-Content-Type-Options", "nosniff");
+        response.setHeader("X-Frame-Options", "DENY");
+        response.setHeader("X-XSS-Protection", "1; mode=block");
+        response.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    }
+    
+    private boolean isValidRequest(HttpServletRequest request) {
+        // Example validation: check for required headers
+        String contentType = request.getContentType();
+        String method = request.getMethod();
+        
+        // For POST/PUT requests, ensure content-type is specified
+        if (("POST".equals(method) || "PUT".equals(method)) && 
+            contentType == null && request.getContentLength() > 0) {
+            return false;
+        }
+        
+        // Check for suspicious patterns in URI
+        String uri = request.getRequestURI();
+        if (uri.contains("../") || uri.contains("..\\")) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    private boolean isRateLimited(HttpServletRequest request) {
+        // Simplified rate limiting - in production, use Redis or similar
+        String clientIP = request.getRemoteAddr();
+        
+        // This is a simplified example - implement proper rate limiting logic
+        // based on your requirements (requests per minute, etc.)
+        return false;
+    }
+    
+    @Override
+    public void destroy() {
+        logger.info("ContainerRequestFilter destroyed");
+    }
+}
+
+
+<?xml version="1.0" encoding="UTF-8"?>
+<web-app xmlns="https://jakarta.ee/xml/ns/jakartaee"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="https://jakarta.ee/xml/ns/jakartaee 
+         https://jakarta.ee/xml/ns/jakartaee/web-app_5_0.xsd"
+         version="5.0">
+
+    <display-name>Jakarta Request Filter Example</display-name>
+
+    <!-- Filter Definition -->
+    <filter>
+        <filter-name>ContainerRequestFilter</filter-name>
+        <filter-class>com.example.filters.ContainerRequestFilter</filter-class>
+        
+        <!-- Filter initialization parameters -->
+        <init-param>
+            <param-name>allowedOrigin</param-name>
+            <param-value>https://yourdomain.com</param-value>
+        </init-param>
+        
+        <init-param>
+            <param-name>logRequests</param-name>
+            <param-value>true</param-value>
+        </init-param>
+    </filter>
+
+    <!-- Filter Mapping - Apply to all requests -->
+    <filter-mapping>
+        <filter-name>ContainerRequestFilter</filter-name>
+        <url-pattern>/*</url-pattern>
+        <!-- Optional: specify dispatcher types -->
+        <dispatcher>REQUEST</dispatcher>
+        <dispatcher>FORWARD</dispatcher>
+        <dispatcher>INCLUDE</dispatcher>
+        <dispatcher>ERROR</dispatcher>
+    </filter-mapping>
+
+    <!-- Alternative: Filter mapping for specific URL patterns -->
+    <!--
+    <filter-mapping>
+        <filter-name>ContainerRequestFilter</filter-name>
+        <url-pattern>/api/*</url-pattern>
+        <dispatcher>REQUEST</dispatcher>
+    </filter-mapping>
+    
+    <filter-mapping>
+        <filter-name>ContainerRequestFilter</filter-name>
+        <url-pattern>/secure/*</url-pattern>
+        <dispatcher>REQUEST</dispatcher>
+    </filter-mapping>
+    -->
+
+    <!-- Alternative: Filter mapping for specific servlets -->
+    <!--
+    <filter-mapping>
+        <filter-name>ContainerRequestFilter</filter-name>
+        <servlet-name>YourServletName</servlet-name>
+        <dispatcher>REQUEST</dispatcher>
+    </filter-mapping>
+    -->
+
+    <!-- Example servlet for testing -->
+    <servlet>
+        <servlet-name>TestServlet</servlet-name>
+        <servlet-class>com.example.servlets.TestServlet</servlet-class>
+    </servlet>
+    
+    <servlet-mapping>
+        <servlet-name>TestServlet</servlet-name>
+        <url-pattern>/test</url-pattern>
+    </servlet-mapping>
+
+</web-app>
