@@ -1,13 +1,209 @@
-// Check if Copilot Chat is installed
-const copilot = vscode.extensions.getExtension('GitHub.copilot-chat');
-console.log('Copilot Chat:', copilot ? '✅ Found' : '❌ Not Found');
+# Install Yeoman and VS Code Extension Generator
+npm install -g yo generator-code
 
-if (copilot) {
-    console.log('Version:', copilot.packageJSON.version);
-    console.log('Active:', copilot.isActive);
+yo code
+
+# Choose the following options:
+# ? What type of extension do you want to create? New Extension (TypeScript)
+# ? What's the name of your extension? Copilot Chat Tester
+# ? What's the identifier of your extension? copilot-chat-tester
+# ? What's the description of your extension? Test communication with Copilot Chat
+# ? Initialize a git repository? Yes
+# ? Bundle the source code with webpack? No
+# ? Package manager? npm
+
+cd copilot-chat-tester
+
+
+{
+  "name": "copilot-chat-tester",
+  "displayName": "Copilot Chat Tester",
+  "description": "Test communication with Copilot Chat",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.97.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:extension.testCopilotChat"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "extension.testCopilotChat",
+        "title": "Test Copilot Chat Communication"
+      }
+    ]
+  },
+  "extensionDependencies": [
+    "GitHub.copilot-chat"
+  ],
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.97.0",
+    "@types/node": "20.x",
+    "typescript": "^5.4.5"
+  }
 }
 
-// Test opening chat
-vscode.commands.executeCommand('workbench.panel.chat.view.copilot.focus')
-    .then(() => console.log('✅ Chat opened'))
-    .catch(err => console.log('❌ Failed:', err));
+
+src/extension.ts
+
+import * as vscode from 'vscode';
+
+export function activate(context: vscode.ExtensionContext) {
+    console.log('Copilot Chat Tester extension is now active!');
+    
+    // Register a command to test Copilot Chat communication
+    let disposable = vscode.commands.registerCommand('extension.testCopilotChat', async () => {
+        try {
+            vscode.window.showInformationMessage('Testing Copilot Chat communication...');
+            
+            // Check if Copilot Chat is available
+            const copilotAvailable = await checkCopilotChatAvailability();
+            
+            if (!copilotAvailable) {
+                vscode.window.showErrorMessage('Copilot Chat is not available. Make sure GitHub Copilot Chat extension is installed and you are signed in.');
+                return;
+            }
+
+            // Try to send a message to Copilot Chat and get response
+            const response = await sendMessageToCopilotChat('Hello, can you help me with JavaScript?');
+            
+            // Display the response
+            vscode.window.showInformationMessage(`✅ Success! Copilot Chat Response: ${response}`);
+            
+        } catch (error) {
+            vscode.window.showErrorMessage(`❌ Error communicating with Copilot Chat: ${error}`);
+            console.error('Copilot Chat error:', error);
+        }
+    });
+
+    context.subscriptions.push(disposable);
+}
+
+async function checkCopilotChatAvailability(): Promise<boolean> {
+    try {
+        // Method 1: Check if Copilot Chat extension is installed and active
+        const copilotChatExtension = vscode.extensions.getExtension('GitHub.copilot-chat');
+        
+        if (!copilotChatExtension) {
+            console.log('❌ Copilot Chat extension not found');
+            return false;
+        }
+
+        if (!copilotChatExtension.isActive) {
+            console.log('🔄 Activating Copilot Chat extension...');
+            await copilotChatExtension.activate();
+        }
+
+        console.log('✅ Copilot Chat extension is active');
+
+        // Method 2: Check if Language Model API is available (VS Code 1.97.0+)
+        try {
+            const models = await vscode.lm.selectChatModels({
+                vendor: 'copilot'
+            });
+            
+            if (models.length > 0) {
+                console.log(`✅ Found ${models.length} Copilot language models`);
+                return true;
+            }
+        } catch (lmError) {
+            console.log('Language model API not available, trying alternative methods');
+        }
+
+        return true; // Extension is active, assume chat is available
+        
+    } catch (error) {
+        console.error('❌ Error checking Copilot Chat availability:', error);
+        return false;
+    }
+}
+
+async function sendMessageToCopilotChat(message: string): Promise<string> {
+    try {
+        // Method 1: Try using VS Code's Language Model API (recommended for 1.97.0+)
+        try {
+            const models = await vscode.lm.selectChatModels({
+                vendor: 'copilot'
+            });
+
+            if (models.length > 0) {
+                const model = models[0];
+                console.log(`🤖 Using model: ${model.name}`);
+
+                const chatResponse = await model.sendRequest(
+                    [
+                        vscode.LanguageModelChatMessage.User(message)
+                    ],
+                    {},
+                    new vscode.CancellationTokenSource().token
+                );
+
+                let response = '';
+                for await (const chunk of chatResponse.text) {
+                    response += chunk;
+                }
+
+                return response || 'Received empty response from Copilot';
+            }
+        } catch (lmError) {
+            console.log('Language model API failed, trying alternative methods...');
+        }
+
+        // Method 2: Try opening chat panel and sending message via commands
+        console.log('🔄 Opening Copilot Chat panel...');
+        
+        // Focus on the chat panel
+        await vscode.commands.executeCommand('workbench.panel.chat.view.copilot.focus');
+        
+        // Wait a moment for the panel to load
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Try to open chat with the message
+        try {
+            await vscode.commands.executeCommand('workbench.action.chat.open', {
+                query: message
+            });
+        } catch (cmdError) {
+            // Alternative command
+            await vscode.commands.executeCommand('github.copilot.interactiveEditor.explain');
+        }
+
+        return 'Message sent to Copilot Chat panel. Check the chat panel for the response.';
+
+    } catch (error) {
+        throw new Error(`Failed to communicate with Copilot Chat: ${error}`);
+    }
+}
+
+export function deactivate() {
+    console.log('Copilot Chat Tester extension deactivated');
+}
+
+
+# Install dependencies
+npm install
+
+# Compile the TypeScript code
+npm run compile
+
+Step 6: Test the Extension
+
+Open VS Code in the extension folder:
+bashcode .
+
+Press F5 or go to Run > Start Debugging to open a new VS Code window with your extension loaded.
+Test the extension:
+
+In the new window, press Ctrl+Shift+P (or Cmd+Shift+P on Mac)
+Type "Test Copilot Chat Communication"
+Press Enter
