@@ -1,0 +1,13 @@
+// Check if Copilot Chat is installed
+const copilot = vscode.extensions.getExtension('GitHub.copilot-chat');
+console.log('Copilot Chat:', copilot ? '✅ Found' : '❌ Not Found');
+
+if (copilot) {
+    console.log('Version:', copilot.packageJSON.version);
+    console.log('Active:', copilot.isActive);
+}
+
+// Test opening chat
+vscode.commands.executeCommand('workbench.panel.chat.view.copilot.focus')
+    .then(() => console.log('✅ Chat opened'))
+    .catch(err => console.log('❌ Failed:', err));
